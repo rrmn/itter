@@ -1,3 +1,5 @@
+> PRs very welcome!
+
 # itter.sh - Social Media for Purists
 
 itter.sh is a minimalist Social Media platform accessible exclusively via terminal.
