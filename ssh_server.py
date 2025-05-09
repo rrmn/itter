@@ -1,0 +1,738 @@
+# /Users/roman/work/itter/ssh_server.py
+import asyncio
+import asyncssh
+import re
+import textwrap
+import sys
+from typing import Optional, Dict, Any, List, Tuple
+
+# Import from our modules
+import database as db
+import utils
+import config
+
+# Global reference - will be set by main.py
+# Use forward reference for type hint to avoid circular import if needed later
+active_sessions_ref: Optional[Dict[str, "ItterShell"]] = None
+
+
+def init_ssh(sessions_dict: Dict[str, "ItterShell"]):  # <-- Update type hint
+    """Initializes the SSH module with the active sessions reference."""
+    global active_sessions_ref
+    active_sessions_ref = sessions_dict
+    utils.debug_log("SSH Server module initialized.")
+
+
+class ItterSSHServer(asyncssh.SSHServer):
+    def __init__(self):
+        self.is_registration_attempt = False
+        self.registration_username_candidate: Optional[str] = None
+        self.submitted_public_key: Optional[str] = None
+        self.current_username: Optional[str] = None
+        super().__init__()
+
+    def connection_made(self, conn: asyncssh.SSHServerConnection) -> None:
+        utils.debug_log(
+            f"ItterSSHServer connection_made by {conn.get_extra_info('peername')}"
+        )
+        self._conn = conn
+
+    def connection_lost(self, exc: Optional[Exception]) -> None:
+        utils.debug_log(f"ItterSSHServer connection_lost: {exc}")
+        if (
+            self.current_username
+            and active_sessions_ref is not None
+            and self.current_username in active_sessions_ref
+        ):
+            utils.debug_log(
+                f"Removing session for {self.current_username} due to connection loss."
+            )
+            # Use try-except in case the session was already removed somehow
+            try:
+                del active_sessions_ref[self.current_username]
+            except KeyError:
+                utils.debug_log(f"Session for {self.current_username} already removed.")
+        self.current_username = None
+
+    async def begin_auth(self, username: str) -> bool:
+        utils.debug_log(f"begin_auth for '{username}'")
+        self.is_registration_attempt = False
+        self.registration_username_candidate = None
+        self.current_username = None
+
+        if username.startswith("register:"):
+            potential_username = username[9:]
+            if not re.match(r"^[a-zA-Z0-9_]{3,20}$", potential_username):
+                utils.debug_log(
+                    f"Invalid registration username format: '{potential_username}'"
+                )
+                # Try sending message, but don't rely on it working during early auth
+                asyncio.create_task(
+                    self._send_auth_failure_message(
+                        "Invalid username format (3-20 alphanumeric/underscore)."
+                    )
+                )
+                return False
+
+            existing_user = await db.db_get_user_by_username(potential_username)
+            if existing_user:
+                utils.debug_log(
+                    f"Registration attempt for existing username: '{potential_username}'"
+                )
+                asyncio.create_task(
+                    self._send_auth_failure_message(
+                        f"Username '{potential_username}' already taken."
+                    )
+                )
+                return False
+
+            self.is_registration_attempt = True
+            self.registration_username_candidate = potential_username
+            utils.debug_log(
+                f"Registration mode activated for: {self.registration_username_candidate}"
+            )
+            return True
+
+        # Normal login
+        self.current_username = username
+        user_exists = await db.db_get_user_by_username(username)
+        if not user_exists:
+            utils.debug_log(f"Login attempt for non-existent user: '{username}'")
+            msg = f"User '{username}' not found. Register: ssh -p {config.SSH_PORT} register:{username}@{config.SSH_HOST}"
+            asyncio.create_task(self._send_auth_failure_message(msg))
+            return False
+
+        utils.debug_log(f"User '{username}' found, proceeding to public key auth.")
+        return True
+
+    async def _send_auth_failure_message(self, message: str):
+        # Best effort, might not display if auth fails too quickly
+        if hasattr(self, "_conn") and self._conn.is_writable():
+            try:
+                # Attempting to write might fail if connection is already closing
+                # self._conn.send_auth_banner(message + '\r\n') # Requires precise timing
+                utils.debug_log(f"Auth failure message intended for client: {message}")
+            except Exception as e:
+                utils.debug_log(f"Error trying to send auth failure message: {e}")
+
+    def public_key_auth_supported(self) -> bool:
+        return True
+
+    async def validate_public_key(
+        self, username_from_auth_begin: str, key: asyncssh.SSHKey
+    ) -> bool:
+        utils.debug_log(f"validate_public_key for '{username_from_auth_begin}'")
+        try:
+            self.submitted_public_key = key.export_public_key().decode().strip()
+        except Exception as e:
+            utils.debug_log(f"Error exporting public key: {e}")
+            return False
+
+        if self.is_registration_attempt:
+            utils.debug_log(
+                f"Public key captured for registration of '{self.registration_username_candidate}'"
+            )
+            return True  # Validation happens later in the shell
+
+        if not self.current_username:
+            utils.debug_log(
+                "Public key validation attempted without a current username (non-registration)."
+            )
+            return False
+
+        user_obj = await db.db_get_user_by_username(self.current_username)
+        if not user_obj or "public_key" not in user_obj or not user_obj["public_key"]:
+            utils.debug_log(
+                f"User '{self.current_username}' not found or has no public key."
+            )
+            return False
+
+        stored_key = user_obj["public_key"].strip()
+        is_valid = stored_key == self.submitted_public_key
+        utils.debug_log(
+            f"Key validation for '{self.current_username}': {'Success' if is_valid else 'Failure'}"
+        )
+        return is_valid
+
+    def session_requested(self) -> "ItterShell":
+        utils.debug_log("session_requested, creating ItterShell instance.")
+        if self.is_registration_attempt:
+            shell = ItterShell(
+                ssh_server_ref=self,
+                initial_username=None,
+                is_registration_flow=True,
+                registration_details=(
+                    self.registration_username_candidate,
+                    self.submitted_public_key,
+                ),
+            )
+        else:
+            shell = ItterShell(
+                ssh_server_ref=self,
+                initial_username=self.current_username,
+                is_registration_flow=False,
+                registration_details=None,
+            )
+        # --- CRITICAL: Pass the active sessions reference ---
+        if active_sessions_ref is not None:
+            shell.set_active_sessions_ref(active_sessions_ref)
+        else:
+            utils.debug_log(
+                "WARNING: active_sessions_ref is None when creating ItterShell!"
+            )
+        return shell
+
+
+class ItterShell(asyncssh.SSHServerSession):
+    def __init__(
+        self,
+        ssh_server_ref: ItterSSHServer,
+        initial_username: Optional[str],
+        is_registration_flow: bool,
+        registration_details: Optional[Tuple[str, str]],
+    ):
+        self._ssh_server = ssh_server_ref
+        self.username: Optional[str] = initial_username
+        self._is_registration_flow = is_registration_flow
+        if self._is_registration_flow and registration_details:
+            self._reg_username_candidate, self._reg_public_key = registration_details
+        else:
+            self._reg_username_candidate, self._reg_public_key = None, None
+
+        self._chan: Optional[asyncssh.SSHServerChannel] = None
+        self._current_target_filter: Dict[str, Optional[str]] = {
+            "type": "all",
+            "value": None,
+        }
+        self._is_watching_timeline = False
+        self._timeline_auto_refresh_task: Optional[asyncio.Task] = None
+        self._current_timeline_page = 1
+        self._term_width = 80
+        self._term_height = 24
+        self._input_buffer = ""
+        self._active_sessions: Optional[Dict[str, "ItterShell"]] = (
+            None  # Use forward reference
+        )
+
+        try:
+            with open(config.BANNER_FILE, "r") as f:
+                self._banner_text = f.read()
+        except FileNotFoundError:
+            self._banner_text = "Welcome to itter.sh!\n(Banner file not found)"
+
+        super().__init__()
+
+    # Method to receive the active sessions reference from the factory
+    def set_active_sessions_ref(self, sessions_dict: Dict[str, "ItterShell"]):
+        self._active_sessions = sessions_dict
+
+    def _write_to_channel(self, message: str = "", newline: bool = True):
+        if self._chan:
+            try:
+                processed_message = message.replace("\r\n", "\n").replace("\n", "\r\n")
+                if newline:
+                    if not processed_message.endswith("\r\n"):
+                        processed_message += "\r\n"
+                else:
+                    if processed_message.endswith("\r\n"):
+                        processed_message = processed_message[:-2]
+                self._chan.write(processed_message)
+            except (
+                OSError,
+                asyncssh.Error,
+                ConnectionResetError,
+                BrokenPipeError,
+            ) as e:
+                utils.debug_log(f"Failed to write basic content: {e}")
+
+    def _prompt(self):
+        if self.username:
+            prompt_text = f"({self.username})itter> "
+            self._write_to_channel(prompt_text, newline=False)
+
+    def connection_made(self, chan: asyncssh.SSHServerChannel) -> None:
+        utils.debug_log(
+            f"ItterShell connection_made for {'REGISTRATION' if self._is_registration_flow else self.username}"
+        )
+        self._chan = chan
+        if self._is_registration_flow:
+            asyncio.create_task(self._handle_registration_flow())
+        else:
+            if self.username and self._active_sessions is not None:
+                self._active_sessions[self.username] = self  # Add self to shared dict
+                self._display_welcome_banner()
+                self._show_help()
+                self._prompt()
+            elif not self.username:
+                self._write_to_channel("ERROR: Login session started without username.")
+                self.close()
+            else:  # _active_sessions is None
+                self._write_to_channel(
+                    "ERROR: Server state error (active_sessions not set)."
+                )
+                utils.debug_log(
+                    "CRITICAL: _active_sessions is None in ItterShell connection_made"
+                )
+                self.close()
+
+    async def _handle_registration_flow(self):
+        # ... (rest of method is likely okay, uses _write_to_channel) ...
+        utils.debug_log(f"Finalizing registration for '{self._reg_username_candidate}'")
+        if not self._reg_username_candidate or not self._reg_public_key:
+            self._write_to_channel(
+                "ERROR: Registration Error: Missing username or public key."
+            )
+            self.close()
+            return
+        try:
+            await db.db_create_user(self._reg_username_candidate, self._reg_public_key)
+            success_msg = (
+                f"\r\nRegistration successful for user '{self._reg_username_candidate}'!\r\n"
+                f"You can now log in using:\r\n"
+                f"  ssh -p {config.SSH_PORT} -i /path/to/your/private_key {self._reg_username_candidate}@{config.SSH_HOST}\r\n"
+            )
+            self._write_to_channel(success_msg)
+            utils.debug_log(
+                f"User '{self._reg_username_candidate}' registered successfully."
+            )
+        except Exception as e:
+            utils.debug_log(
+                f"[DB ERROR] Registration failed for '{self._reg_username_candidate}': {e}"
+            )
+            self._write_to_channel(f"ERROR: Registration failed. Details: {e}")
+        finally:
+            self.close()
+
+    def _display_welcome_banner(self):
+        self._clear_screen()
+        banner_lines = self._banner_text.splitlines()
+        for line in banner_lines:
+            self._write_to_channel(line)
+        self._write_to_channel()
+
+    def _show_help(self):
+        help_text = (
+            "\r\nitter.sh Commands:\r\n"
+            "  eet <text>                     - Post an eet (max 180 chars).\r\n"
+            "  timeline [mine|all|#chan|@user] [<page>] - Show eets (Default: all, page 1).\r\n"
+            "  watch [mine|all|#chan|@user]   - Live timeline view (Default: all).\r\n"
+            "  follow @<user>                - Follow a user.\r\n"
+            "  unfollow @<user>              - Unfollow a user.\r\n"
+            "  profile [@<user>]             - View user profile (yours or another's).\r\n"
+            "  profile edit -name <Name> -email <Email> - Edit your profile.\r\n"
+            "  help                           - Show this help message.\r\n"
+            "  clear                          - Clear the screen.\r\n"
+            "  exit                           - Exit watch mode or itter.sh.\r\n"
+        )
+        self._write_to_channel(help_text)
+
+    def pty_requested(self, term_type: str, term_size: tuple, term_modes: dict) -> bool:
+        cols = 80
+        rows = 24
+        pixwidth = 0
+        pixheight = 0
+        try:
+            if isinstance(term_size, tuple) and len(term_size) >= 2:
+                cols = int(term_size[0]) if term_size[0] > 0 else 80
+                rows = int(term_size[1]) if term_size[1] > 0 else 24
+            if isinstance(term_size, tuple) and len(term_size) >= 4:
+                pixwidth = int(term_size[2]) if term_size[2] else 0
+                pixheight = int(term_size[3]) if term_size[3] else 0
+        except Exception as e:
+            utils.debug_log(f"Error parsing term_size tuple {term_size}: {e}")
+        utils.debug_log(
+            f"PTY requested: term={term_type}, size={cols}x{rows}, pix={pixwidth}x{pixheight}"
+        )
+        self._term_width = cols
+        self._term_height = rows
+        return True
+
+    def shell_requested(self) -> bool:
+        utils.debug_log("Shell requested by client.")
+        return True
+
+    def data_received(self, data: str, datatype: asyncssh.DataType) -> None:
+        if not self._chan:
+            return
+        utils.debug_log(f"Data received: {data!r} (datatype: {datatype})")
+
+        for char in data:
+            if char in ("\r", "\n"):
+                self._write_to_channel()
+                line_to_process = self._input_buffer
+                self._input_buffer = ""
+                if line_to_process:
+                    utils.debug_log(f"Processing command line: '{line_to_process}'")
+                    asyncio.create_task(self._handle_command_line(line_to_process))
+                else:
+                    self._prompt()
+            elif char == "\x7f":
+                if self._input_buffer:
+                    self._input_buffer = self._input_buffer[:-1]
+                    self._write_to_channel("\b \b", newline=False)
+            elif char == "\x03":
+                self._write_to_channel("^C\r\n", newline=False)
+                self.close()
+            elif char == "\x04":
+                self._write_to_channel("^D\r\n", newline=False)
+                self.close()
+            elif char.isprintable():
+                self._input_buffer += char
+                self._write_to_channel(char, newline=False)
+            else:
+                utils.debug_log(f"Ignoring unhandled character: {char!r}")
+
+    def _clear_screen(self):
+        if self._chan:
+            self._chan.write("\033[2J\033[H")
+
+    async def _handle_command_line(self, line: str):
+        if not self.username and not self._is_registration_flow:
+            self._write_to_channel("ERROR: Critical error: No user context.")
+            self.close()
+            return
+
+        cmd, raw_text, hashtags, user_refs = utils.parse_input_line(line)
+        utils.debug_log(
+            f"Parsed command: cmd='{cmd}', raw_text='{raw_text}', hashtags={hashtags}, user_refs={user_refs}"
+        )
+
+        if not cmd:
+            self._prompt()
+            return
+
+        try:
+            if cmd == "eet":
+                content = raw_text.strip()
+                if not content:
+                    self._write_to_channel("Usage: eet <text>")
+                elif len(content) > config.EET_MAX_LENGTH:
+                    self._write_to_channel(
+                        f"ERROR: Eet too long! Max {config.EET_MAX_LENGTH}."
+                    )
+                else:
+                    await db.db_post_eet(self.username, content, hashtags, user_refs)
+                    self._write_to_channel("Eet posted!")
+            elif cmd == "timeline" or cmd == "watch":
+                self._current_timeline_page = 1
+                target_specifier_text = raw_text
+                parts = raw_text.split()
+                if parts and parts[-1].isdigit():
+                    self._current_timeline_page = int(parts[-1])
+                    target_specifier_text = " ".join(parts[:-1])
+
+                if user_refs:
+                    self._current_target_filter = {
+                        "type": "user",
+                        "value": user_refs[0],
+                    }
+                elif target_specifier_text.strip().startswith("#"):
+                    channel_name = target_specifier_text.strip()[1:]
+                    if re.match(r"^[a-zA-Z0-9][a-zA-Z0-9-]*$", channel_name):
+                        self._current_target_filter = {
+                            "type": "channel",
+                            "value": channel_name,
+                        }
+                    else:
+                        self._write_to_channel(f"Invalid channel: '{channel_name}'.")
+                        self._current_target_filter = {"type": "all", "value": None}
+                else:
+                    self._current_target_filter = utils.parse_target_filter(
+                        target_specifier_text
+                    )
+
+                utils.debug_log(
+                    f"Timeline/Watch target set to: {self._current_target_filter}"
+                )
+                if cmd == "watch":
+                    self._is_watching_timeline = True
+                    await self._start_live_timeline_view()
+                    return
+                else:
+                    self._is_watching_timeline = False
+                    await self._render_and_display_timeline(
+                        page=self._current_timeline_page
+                    )
+            elif cmd == "follow":
+                target_user = (
+                    user_refs[0] if user_refs else raw_text.strip().lstrip("@")
+                )
+                if not target_user:
+                    self._write_to_channel("Usage: follow @<username>")
+                else:
+                    await db.db_follow_user(self.username, target_user)
+                    self._write_to_channel(f"Following @{target_user}.")
+            elif cmd == "unfollow":
+                target_user = (
+                    user_refs[0] if user_refs else raw_text.strip().lstrip("@")
+                )
+                if not target_user:
+                    self._write_to_channel("Usage: unfollow @<username>")
+                else:
+                    await db.db_unfollow_user(self.username, target_user)
+                    self._write_to_channel(f"Unfollowed @{target_user}.")
+            elif cmd == "profile":
+                await self._handle_profile_command(raw_text, user_refs)
+            elif cmd == "help":
+                self._display_welcome_banner()
+                self._show_help()
+            elif cmd == "clear":
+                self._clear_screen()
+                self._prompt()
+                return
+            elif cmd == "exit":
+                await self._handle_exit_command()
+                return
+            else:
+                self._write_to_channel(f"Unknown command: '{cmd}'. Type 'help'.")
+        except ValueError as ve:
+            self._write_to_channel(f"Error: {ve}")
+        except Exception as e:
+            utils.debug_log(f"Error handling command '{cmd}': {e}")
+            self._write_to_channel(f"An unexpected server error occurred.")
+            if config.ITTER_DEBUG_MODE:
+                import traceback
+
+                self._write_to_channel(traceback.format_exc())
+
+        if self._chan and not self._is_watching_timeline:
+            self._prompt()
+
+    async def _handle_profile_command(self, raw_text: str, user_refs: List[str]):
+        args = raw_text.split()
+        if args and args[0].lower() == "edit":
+            new_display_name = None
+            new_email = None
+            try:
+                idx = args.index("-name")
+                new_display_name = (
+                    args[idx + 1]
+                    if len(args) > idx + 1 and not args[idx + 1].startswith("-")
+                    else None
+                )
+            except (ValueError, IndexError):
+                pass
+            try:
+                idx = args.index("-email")
+                new_email = (
+                    args[idx + 1]
+                    if len(args) > idx + 1 and not args[idx + 1].startswith("-")
+                    else None
+                )
+            except (ValueError, IndexError):
+                pass
+            if new_display_name is None and new_email is None:
+                self._write_to_channel(
+                    "Usage: profile edit -name <Name> -email <Email>"
+                )
+            else:
+                await db.db_update_profile(self.username, new_display_name, new_email)
+                self._write_to_channel("Profile updated.")
+        else:
+            profile_username = (
+                user_refs[0]
+                if user_refs
+                else (
+                    raw_text.strip().lstrip("@") if raw_text.strip() else self.username
+                )
+            )
+            try:
+                stats = await db.db_get_profile_stats(profile_username)
+                profile_output = (
+                    f"\r\n--- Profile: @{stats['username']} ---\r\n"
+                    + f"  Display Name: {stats.get('display_name', 'N/A')}\r\n"
+                    + f"  Email:        {stats.get('email', 'N/A')}\r\n"
+                    + f"  Joined:       {utils.time_ago(stats.get('joined_at'))}\r\n"
+                    + f"  Eets:         {stats['eet_count']}\r\n"
+                    + f"  Following:    {stats['following_count']}\r\n"
+                    + f"  Followers:    {stats['follower_count']}\r\n"
+                    + f"---------------------------\r\n"
+                )
+                self._write_to_channel(profile_output)
+            except ValueError as ve:
+                self._write_to_channel(f"Error: {ve}")
+            except Exception as e:
+                utils.debug_log(f"Err profile {profile_username}: {e}")
+                self._write_to_channel(f"Error fetching profile.")
+
+    async def _handle_exit_command(self):
+        if self._is_watching_timeline:
+            self._is_watching_timeline = False
+            if (
+                self._timeline_auto_refresh_task
+                and not self._timeline_auto_refresh_task.done()
+            ):
+                self._timeline_auto_refresh_task.cancel()
+            self._write_to_channel("\nExited live timeline view.")
+            self._prompt()
+        else:
+            self._write_to_channel("\nitter.sh says: Don't let the door hit you!")
+            self.close()
+
+    async def _start_live_timeline_view(self):
+        self._clear_screen()
+        self._write_to_channel(
+            f"Entering live view for {self._current_target_filter['type']}='{self._current_target_filter['value'] or 'all'}'."
+        )
+        self._write_to_channel("(Type 'exit' or Ctrl+C to stop)\n")
+        await self._render_and_display_timeline(
+            page=1, is_live_update=True
+        )  # Initial render clears screen
+        if (
+            self._timeline_auto_refresh_task
+            and not self._timeline_auto_refresh_task.done()
+        ):
+            self._timeline_auto_refresh_task.cancel()
+        self._timeline_auto_refresh_task = asyncio.create_task(
+            self._timeline_refresh_loop()
+        )
+
+    async def _timeline_refresh_loop(self):
+        try:
+            while self._is_watching_timeline:
+                await asyncio.sleep(config.WATCH_REFRESH_INTERVAL_SECONDS)
+                if self._is_watching_timeline:
+                    utils.debug_log("Live timeline auto-refresh triggered.")
+                    await self._render_and_display_timeline(page=1, is_live_update=True)
+        except asyncio.CancelledError:
+            utils.debug_log("Timeline refresh loop cancelled.")
+        except Exception as e:
+            utils.debug_log(f"Error in timeline refresh loop: {e}")
+            if self._is_watching_timeline:
+                self._write_to_channel(f"ERROR: Live timeline update error: {e}")
+
+    async def _render_and_display_timeline(
+        self, page: int, is_live_update: bool = False
+    ):
+        if not self.username:
+            return
+        try:
+            eets = await db.db_get_filtered_timeline_posts(
+                self.username, self._current_target_filter, page=page
+            )
+        except Exception as e:
+            self._write_to_channel(f"Timeline Error: {e}")
+            return
+
+        if is_live_update:
+            self._clear_screen()
+
+        time_w = 12
+        user_w = 25
+        sep_w = 3
+        eet_w = max(10, self._term_width - time_w - user_w - (sep_w * 2))
+        lines = [f"{'Time':<{time_w}} | {'User':<{user_w}} | {'Eet':<{eet_w}}"]
+        lines.append("-" * min(self._term_width, time_w + user_w + eet_w + (sep_w * 2)))
+
+        if not eets:
+            lines.append(" No eets found." if page == 1 else " End of timeline.")
+        else:
+            for eet in eets:
+                t = utils.time_ago(eet.get("created_at"))
+                u_raw = f"@{eet.get('username', 'ghost')}"
+                disp = eet.get("display_name")
+                u = f"{disp} ({u_raw})" if disp else u_raw
+                if len(u) > user_w:
+                    u = u[: user_w - 3] + "..."
+                cont = eet.get("content", "").replace("\r", "").replace("\n", " ")
+                wrapper = textwrap.TextWrapper(width=eet_w, subsequent_indent="  ")
+                cont_lines = wrapper.wrap(text=cont)
+                lines.append(
+                    f"{t:<{time_w}} | {u:<{user_w}} | {cont_lines[0] if cont_lines else '':<{eet_w}}"
+                )
+                indent = " " * (time_w + sep_w + user_w + sep_w)
+                for i in range(1, len(cont_lines)):
+                    lines.append(
+                        f"{indent}{cont_lines[i]:<{eet_w}}"[: self._term_width]
+                    )
+
+        full_output = "\r\n".join(lines)
+        self._write_to_channel(full_output, newline=True)
+
+        if self._is_watching_timeline:
+            status = f"Live updating... Target: {self._current_target_filter['type']}='{self._current_target_filter['value'] or 'all'}'. (exit to stop)"
+            self._write_to_channel(status, newline=True)
+        else:
+            footer = ""
+            if not eets and page > 1:
+                footer = f"Page {page}. No more."
+            elif len(eets) >= config.DEFAULT_TIMELINE_PAGE_SIZE:
+                footer = f"Page {page}. `timeline ... {page + 1}` for more."
+            elif eets:
+                footer = f"Page {page}. End of results."
+            if footer:
+                self._write_to_channel(footer, newline=True)
+
+    async def handle_new_post_realtime(self, post_record: Dict[str, Any]):
+        if not self._is_watching_timeline or not self.username:
+            return
+        utils.debug_log(f"RT check for {self.username}: Post {post_record.get('id')}")
+        post_author_id = post_record.get("user_id")
+        post_tags = post_record.get("tags", []) or []
+        target_type = self._current_target_filter.get("type")
+        target_value = self._current_target_filter.get("value")
+        refresh = False
+        if target_type == "all":
+            refresh = True
+        elif target_type == "mine":
+            details = await db.db_get_user_by_id(post_author_id)
+            if details:
+                refresh = (
+                    details["username"] == self.username
+                ) or await db.db_is_following(self.username, details["username"])
+        elif target_type == "user":
+            details = await db.db_get_user_by_id(post_author_id)
+            if details and details["username"] == target_value:
+                refresh = True
+        elif target_type == "channel":
+            if target_value and target_value in [tag.lower() for tag in post_tags]:
+                refresh = True
+        if refresh:
+            utils.debug_log(f"RT relevant for {self.username}, refreshing.")
+            await self._render_and_display_timeline(page=1, is_live_update=True)
+
+    def connection_lost(self, exc: Optional[Exception]) -> None:
+        utils.debug_log(
+            f"ItterShell connection_lost for {self.username or 'REGISTRATION'}: {exc}"
+        )
+        if (
+            self.username
+            and self._active_sessions
+            and self.username in self._active_sessions
+        ):
+            try:
+                del self._active_sessions[self.username]
+            except KeyError:
+                pass
+        if (
+            self._timeline_auto_refresh_task
+            and not self._timeline_auto_refresh_task.done()
+        ):
+            self._timeline_auto_refresh_task.cancel()
+        self._chan = None
+
+    def close(self) -> None:
+        if self._chan:
+            self._chan.close()
+
+
+# --- SSH Server Start Function ---
+async def start_ssh_server(
+    sessions_dict: Dict[str, ItterShell],
+):  # Use correct type hint
+    """Starts the AsyncSSH server."""
+    init_ssh(sessions_dict)
+    utils.debug_log(f"Starting SSH server on {config.SSH_HOST}:{config.SSH_PORT}")
+    try:
+        await asyncssh.create_server(
+            ItterSSHServer,
+            config.SSH_HOST,
+            config.SSH_PORT,
+            server_host_keys=[config.SSH_HOST_KEY_PATH],
+            line_editor=False,
+        )
+        print(f"itter.sh server humming on ssh://{config.SSH_HOST}:{config.SSH_PORT}")
+        print("Ctrl+C to stop.")
+    except Exception as e:
+        sys.stderr.write(f"[FATAL ERROR] SSH server failed to start: {e}\n")
+        sys.exit(1)

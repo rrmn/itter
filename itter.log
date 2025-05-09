@@ -1,0 +1,105 @@
+Critical error in start_server: Channel not open for sending
+Traceback (most recent call last):
+  File "/Users/roman/work/itter/./main.py", line 784, in start_server
+    await realtime_client.listen()
+  File "/Users/roman/work/itter/.venv/lib/python3.13/site-packages/realtime/_async/client.py", line 152, in listen
+    await asyncio.gather(self._listen(), self._heartbeat())
+  File "/Users/roman/work/itter/.venv/lib/python3.13/site-packages/realtime/_async/client.py", line 90, in _listen
+    channel._trigger(msg.event, msg.payload, msg.ref)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/roman/work/itter/.venv/lib/python3.13/site-packages/realtime/_async/channel.py", line 526, in _trigger
+    binding.callback(payload, ref)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
+  File "/Users/roman/work/itter/.venv/lib/python3.13/site-packages/realtime/_async/channel.py", line 114, in on_reply
+    self._trigger(self._reply_event_name(ref), payload)
+    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/roman/work/itter/.venv/lib/python3.13/site-packages/realtime/_async/channel.py", line 526, in _trigger
+    binding.callback(payload, ref)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
+  File "/Users/roman/work/itter/.venv/lib/python3.13/site-packages/realtime/_async/push.py", line 81, in on_reply
+    self._match_receive(**self.received_resp)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/roman/work/itter/.venv/lib/python3.13/site-packages/realtime/_async/push.py", line 119, in _match_receive
+    hook.callback(response)
+    ~~~~~~~~~~~~~^^^^^^^^^^
+  File "/Users/roman/work/itter/.venv/lib/python3.13/site-packages/realtime/_async/channel.py", line 232, in on_join_push_ok
+    callback and callback(RealtimeSubscribeStates.SUBSCRIBED, None)
+                 ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/roman/work/itter/./main.py", line 454, in on_subscribe
+    self.chan.write("Realtime connected!\n")
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/roman/work/itter/.venv/lib/python3.13/site-packages/asyncssh/editor.py", line 912, in write
+    self._orig_chan.write(data, datatype)
+    ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^
+  File "/Users/roman/work/itter/.venv/lib/python3.13/site-packages/asyncssh/channel.py", line 917, in write
+    raise BrokenPipeError('Channel not open for sending')
+BrokenPipeError: Channel not open for sending
+Critical error in start_server: Channel not open for sending
+Traceback (most recent call last):
+  File "/Users/roman/work/itter/./main.py", line 784, in start_server
+    await realtime_client.listen()
+  File "/Users/roman/work/itter/.venv/lib/python3.13/site-packages/realtime/_async/client.py", line 152, in listen
+    await asyncio.gather(self._listen(), self._heartbeat())
+  File "/Users/roman/work/itter/.venv/lib/python3.13/site-packages/realtime/_async/client.py", line 90, in _listen
+    channel._trigger(msg.event, msg.payload, msg.ref)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/roman/work/itter/.venv/lib/python3.13/site-packages/realtime/_async/channel.py", line 526, in _trigger
+    binding.callback(payload, ref)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
+  File "/Users/roman/work/itter/.venv/lib/python3.13/site-packages/realtime/_async/channel.py", line 114, in on_reply
+    self._trigger(self._reply_event_name(ref), payload)
+    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/roman/work/itter/.venv/lib/python3.13/site-packages/realtime/_async/channel.py", line 526, in _trigger
+    binding.callback(payload, ref)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
+  File "/Users/roman/work/itter/.venv/lib/python3.13/site-packages/realtime/_async/push.py", line 81, in on_reply
+    self._match_receive(**self.received_resp)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/roman/work/itter/.venv/lib/python3.13/site-packages/realtime/_async/push.py", line 119, in _match_receive
+    hook.callback(response)
+    ~~~~~~~~~~~~~^^^^^^^^^^
+  File "/Users/roman/work/itter/.venv/lib/python3.13/site-packages/realtime/_async/channel.py", line 232, in on_join_push_ok
+    callback and callback(RealtimeSubscribeStates.SUBSCRIBED, None)
+                 ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/roman/work/itter/./main.py", line 454, in on_subscribe
+    self.chan.write("Realtime connected!\n")
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/roman/work/itter/.venv/lib/python3.13/site-packages/asyncssh/editor.py", line 912, in write
+    self._orig_chan.write(data, datatype)
+    ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^
+  File "/Users/roman/work/itter/.venv/lib/python3.13/site-packages/asyncssh/channel.py", line 917, in write
+    raise BrokenPipeError('Channel not open for sending')
+BrokenPipeError: Channel not open for sending
+Critical error in start_server: 'SSHServerChannel' object has no attribute 'is_open'
+Traceback (most recent call last):
+  File "/Users/roman/work/itter/./main.py", line 808, in start_server
+    await realtime_client.listen()
+  File "/Users/roman/work/itter/.venv/lib/python3.13/site-packages/realtime/_async/client.py", line 152, in listen
+    await asyncio.gather(self._listen(), self._heartbeat())
+  File "/Users/roman/work/itter/.venv/lib/python3.13/site-packages/realtime/_async/client.py", line 90, in _listen
+    channel._trigger(msg.event, msg.payload, msg.ref)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/roman/work/itter/.venv/lib/python3.13/site-packages/realtime/_async/channel.py", line 526, in _trigger
+    binding.callback(payload, ref)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
+  File "/Users/roman/work/itter/.venv/lib/python3.13/site-packages/realtime/_async/channel.py", line 114, in on_reply
+    self._trigger(self._reply_event_name(ref), payload)
+    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/roman/work/itter/.venv/lib/python3.13/site-packages/realtime/_async/channel.py", line 526, in _trigger
+    binding.callback(payload, ref)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
+  File "/Users/roman/work/itter/.venv/lib/python3.13/site-packages/realtime/_async/push.py", line 81, in on_reply
+    self._match_receive(**self.received_resp)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/roman/work/itter/.venv/lib/python3.13/site-packages/realtime/_async/push.py", line 119, in _match_receive
+    hook.callback(response)
+    ~~~~~~~~~~~~~^^^^^^^^^^
+  File "/Users/roman/work/itter/.venv/lib/python3.13/site-packages/realtime/_async/channel.py", line 232, in on_join_push_ok
+    callback and callback(RealtimeSubscribeStates.SUBSCRIBED, None)
+                 ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/roman/work/itter/./main.py", line 454, in on_subscribe
+    if self.chan and self.chan.is_open:
+                     ^^^^^^^^^^^^^^^^^
+  File "/Users/roman/work/itter/.venv/lib/python3.13/site-packages/asyncssh/editor.py", line 769, in __getattr__
+    return getattr(self._orig_chan, attr)
+AttributeError: 'SSHServerChannel' object has no attribute 'is_open'
