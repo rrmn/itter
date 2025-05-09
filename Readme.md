@@ -1,6 +1,6 @@
 # itter.sh - Social Media for Purists
 
-itter.sh is a minimalist Social mMedia platform accessible exclusively via terminal.
+itter.sh is a minimalist Social Media platform accessible exclusively via terminal.
 
 It uses Python with `asyncssh` for the server and Supabase for the backend database and real-time updates.
 
