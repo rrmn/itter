@@ -1,5 +1,3 @@
-# /Users/roman/work/itter/README.md
-
 # itter.sh - Social Media for Purists
 
 itter.sh is a minimalist Social mMedia platform accessible exclusively via terminal.
