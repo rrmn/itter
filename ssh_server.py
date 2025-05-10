@@ -74,7 +74,7 @@ class ItterSSHServer(asyncssh.SSHServer):
                 )
                 return False
 
-            existing_user = await db.db_get_user_by_username(potential_username)
+            existing_user = await db.db_username_exists_case_insensitive(potential_username)
             if existing_user:
                 utils.debug_log(
                     f"Registration attempt for existing username: '{potential_username}'"

@@ -47,6 +47,24 @@ async def db_get_user_by_id(user_id: str) -> Optional[Dict[str, Any]]:
         debug_log(f"[DB ERROR] get_user_by_id: {e}")
         return None
 
+async def db_username_exists_case_insensitive(username: str) -> Optional[str]:
+    if not supabase_client:
+        raise RuntimeError("Database not initialized")
+    debug_log(f"DB: db_username_exists_case_insensitive('{username}')")
+
+    username_lower = username.lower()
+    try:
+        resp = await asyncio.to_thread(
+            supabase_client.table("users")
+            .select("username")
+            .ilike("username", username_lower)
+            .execute
+        )
+        return resp.data[0] if resp.data else None
+    except Exception as e:
+        debug_log(f"[DB ERROR] db_username_exists_case_insensitive: {e}")
+        return None
+
 
 async def db_create_user(username: str, public_key: str) -> None:
     """Creates a new user entry."""
