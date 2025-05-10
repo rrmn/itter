@@ -10,6 +10,7 @@ from typing import Optional, Dict, Any, List, Tuple
 import database as db
 import utils
 import config
+import command_history
 
 # Global reference - will be set by main.py
 # Use forward reference for type hint to avoid circular import if needed later
@@ -293,6 +294,7 @@ class ItterShell(asyncssh.SSHServerSession):
         self._term_width = 80
         self._term_height = 24
         self._input_buffer = ""
+        self._command_history = command_history.CommandHistory()
         self._active_sessions: Optional[Dict[str, "ItterShell"]] = (
             None  # Use forward reference
         )
@@ -329,10 +331,20 @@ class ItterShell(asyncssh.SSHServerSession):
             ) as e:
                 utils.debug_log(f"Failed to write basic content: {e}")
 
+    def _get_prompt_text(self):
+        return f"({self.username})itter> "
+
     def _prompt(self):
         if self.username:
-            prompt_text = f"({self.username})itter> "
+            prompt_text = self._get_prompt_text()
             self._write_to_channel(prompt_text, newline=False)
+
+    def _redraw_input_line(self):
+        prompt_text = self._get_prompt_text()
+        self._write_to_channel("\r", newline=False)
+        # Overwrite existing input with spaces to clear the line
+        self._write_to_channel(" " * (len(prompt_text) + len(self._input_buffer)), newline=False)
+        self._write_to_channel("\r", newline=False)
 
     def connection_made(self, chan: asyncssh.SSHServerChannel) -> None:
         utils.debug_log(
@@ -453,6 +465,27 @@ class ItterShell(asyncssh.SSHServerSession):
             return
         utils.debug_log(f"Data received: {data!r} (datatype: {datatype})")
 
+        # Handle escape sequences
+        if data.startswith("\x1b"):
+            if data == "\x1b[A":
+                self._redraw_input_line()
+                command = self._command_history.scroll_up()
+                self._prompt()
+                self._write_to_channel(command, newline=False)
+                self._input_buffer = command
+                return
+            elif data == "\x1b[B":
+                self._redraw_input_line()
+                command = self._command_history.scroll_down()
+                self._prompt()
+                self._write_to_channel(command, newline=False)
+                self._input_buffer = command
+                return
+            else:
+                utils.debug_log(f"unknown escape sequence: {data!r}")
+                return
+
+        # Handle normal character input
         for char in data:
             if char in ("\r", "\n"):
                 self._write_to_channel()
@@ -499,6 +532,9 @@ class ItterShell(asyncssh.SSHServerSession):
             return
 
         try:
+            # Add command to history
+            self._command_history.add((cmd + " " + raw_text.strip()).strip())
+
             if cmd == "eet":
                 content = raw_text.strip()
                 if not content:
