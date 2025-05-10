@@ -2,7 +2,7 @@
 import asyncio
 from typing import Optional, Dict, Any, List
 from supabase import Client
-from utils import debug_log
+from utils import debug_log, hash_ip
 import traceback
 from config import ITTER_DEBUG_MODE, EET_MAX_LENGTH, DEFAULT_TIMELINE_PAGE_SIZE
 
@@ -350,11 +350,17 @@ async def db_get_ignored_user_ids(username: str) -> List[str]:
 
 
 async def db_post_eet(
-    username: str, content: str, tags: List[str], mentions: List[str]
+    username: str,
+    content: str,
+    tags: List[str],
+    mentions: List[str],
+    client_ip: Optional[str] = None,
 ) -> None:
     if not supabase_client:
         raise RuntimeError("Database not initialized")
-    debug_log(f"DB: post_eet('{username}') -> tags={tags}, mentions={mentions}")
+    debug_log(
+        f"DB: post_eet('{username}') -> tags={tags}, mentions={mentions}, client_ip={client_ip}"
+    )
     if len(content) > EET_MAX_LENGTH:
         raise ValueError(f"Eet too long (max {EET_MAX_LENGTH} chars).")
 
@@ -368,17 +374,28 @@ async def db_post_eet(
         if mentioned_user:
             valid_user_mentions.append(ref_username)
 
+    # --- Prepare post_data and add hashed_ip ---
+    post_data = {
+        "user_id": user["id"],
+        "content": content,
+        "tags": tags,
+        "users_mentioned": valid_user_mentions,
+    }
+
+    if client_ip:
+        hashed_client_ip = hash_ip(client_ip)
+        if hashed_client_ip:
+            post_data["hashed_ip"] = hashed_client_ip
+            debug_log(f"DB: Storing hashed IP for post by {username}")
+        else:
+            debug_log(
+                f"DB: Could not hash IP {client_ip} for post by {username}. IP will not be stored."
+            )
+
     try:
         await asyncio.to_thread(
             supabase_client.table("posts")
-            .insert(
-                {
-                    "user_id": user["id"],
-                    "content": content,
-                    "tags": tags,
-                    "users_mentioned": valid_user_mentions,
-                }
-            )
+            .insert(post_data)
             .execute
         )
     except Exception as e:

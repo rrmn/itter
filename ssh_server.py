@@ -296,6 +296,7 @@ class ItterShell(asyncssh.SSHServerSession):
         self._active_sessions: Optional[Dict[str, "ItterShell"]] = (
             None  # Use forward reference
         )
+        self._client_ip: Optional[str] = None
 
         try:
             with open(config.BANNER_FILE, "r") as f:
@@ -338,6 +339,19 @@ class ItterShell(asyncssh.SSHServerSession):
             f"ItterShell connection_made for {'REGISTRATION' if self._is_registration_flow else self.username}"
         )
         self._chan = chan
+
+        # --- Capture client IP ---
+        if self._chan:
+            peername = self._chan.get_extra_info("peername")
+            if peername and isinstance(peername, tuple) and len(peername) > 0:
+                self._client_ip = peername[0]
+                utils.debug_log("Client IP captured.")
+            else:
+                self._client_ip = (
+                    None  # Should ideally not happen if connection is established
+                )
+                utils.debug_log("Could not determine client IP for session.")
+
         if self._is_registration_flow:
             asyncio.create_task(self._handle_registration_flow())
         else:
@@ -494,7 +508,9 @@ class ItterShell(asyncssh.SSHServerSession):
                         f"ERROR: Eet too long! Max {config.EET_MAX_LENGTH}."
                     )
                 else:
-                    await db.db_post_eet(self.username, content, hashtags, user_refs)
+                    await db.db_post_eet(
+                        self.username, content, hashtags, user_refs, self._client_ip
+                    )
                     self._write_to_channel("Eet posted!")
             elif cmd == "timeline" or cmd == "watch":
                 self._current_timeline_page = 1
@@ -770,6 +786,7 @@ class ItterShell(asyncssh.SSHServerSession):
             if footer:
                 self._write_to_channel(footer, newline=True)
 
+    # Using your original handle_new_post_realtime as per our discussion
     async def handle_new_post_realtime(self, post_record: Dict[str, Any]):
         if not self._is_watching_timeline or not self.username:
             return

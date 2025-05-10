@@ -20,6 +20,7 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")  # Should be SERVICE_ROLE key
 SUPABASE_WSURL = os.getenv("SUPABASE_WSURL")
 SSH_HOST = os.getenv("SSH_HOST", "0.0.0.0")
 SSH_PORT = int(os.getenv("SSH_PORT", "8022"))
+IP_HASH_SALT = os.getenv("IP_HASH_SALT")
 
 
 # --- Validation ---
@@ -29,6 +30,7 @@ def validate_config():
         (SUPABASE_URL, "SUPABASE_URL"),
         (SUPABASE_KEY, "SUPABASE_KEY"),
         (SUPABASE_WSURL, "SUPABASE_WSURL"),
+        (IP_HASH_SALT, "IP_HASH_SALT"),
     ]:
         if not var:
             missing_env.append(name)

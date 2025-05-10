@@ -1,8 +1,9 @@
 # /Users/roman/work/itter/utils.py
 import re
+import hashlib
 from datetime import datetime, timezone
 from typing import Optional, Tuple, List, Dict
-from config import ITTER_DEBUG_MODE # Import DEBUG_MODE from config
+from config import ITTER_DEBUG_MODE, IP_HASH_SALT
 
 # --- ANSI Escape Codes ---
 # Reset
@@ -99,3 +100,20 @@ def format_eet_content(content: str) -> str:
     # Highlight mentions (Cyan) - apply after hashtags
     highlighted_content = USER_RE.sub(rf"{FG_CYAN}@\1{RESET}", highlighted_content)
     return highlighted_content
+
+
+# --- IP Hashing ---
+def hash_ip(ip_address: str) -> Optional[str]:
+    if not IP_HASH_SALT:
+        debug_log("IP_HASH_SALT is not set. Cannot hash IP.")
+        return None
+    if not ip_address:
+        debug_log("No IP address provided to hash.")
+        return None
+    try:
+        salted_ip = IP_HASH_SALT + ip_address
+        hashed_ip = hashlib.sha256(salted_ip.encode("utf-8")).hexdigest()
+        return hashed_ip
+    except Exception as e:
+        debug_log(f"Error hashing IP address {ip_address}: {e}")
+        return None
