@@ -1,7 +1,7 @@
 # /Users/roman/work/itter/database.py
 import asyncio
 from typing import Optional, Dict, Any, List
-from supabase import Client  # Import Client type hint
+from supabase import Client
 from utils import debug_log
 import traceback
 from config import ITTER_DEBUG_MODE, EET_MAX_LENGTH, DEFAULT_TIMELINE_PAGE_SIZE
@@ -175,14 +175,16 @@ async def db_is_following(follower_username: str, following_username: str) -> bo
     try:
         resp = await asyncio.to_thread(
             supabase_client.table("follows")
-            .select("follower_id", count="exact")  # Just check count
+            .select("follower_id", count="exact")
             .eq("follower_id", follower["id"])
             .eq("following_id", following["id"])
             .execute
         )
         return (
-            resp.count > 0 if hasattr(resp, "count") else bool(resp.data)
-        )  # Check count attribute exists
+            resp.count > 0
+            if hasattr(resp, "count") and resp.count is not None
+            else bool(resp.data)
+        )
     except Exception as e:
         debug_log(f"[DB ERROR] is_following: {e}")
         return False
@@ -243,7 +245,108 @@ async def db_unfollow_user(
         raise e
 
 
-# --- Post (Eet) Operations ---
+async def db_is_ignoring(ignorer_username: str, ignored_username: str) -> bool:
+    if not supabase_client:
+        raise RuntimeError("Database not initialized")
+    debug_log(f"DB: is_ignoring('{ignorer_username}', '{ignored_username}')")
+    ignorer = await db_get_user_by_username(ignorer_username)
+    ignored = await db_get_user_by_username(ignored_username)
+    if not ignorer or not ignored:
+        return False
+    try:
+        resp = await asyncio.to_thread(
+            supabase_client.table("ignored_users")
+            .select("ignorer_id", count="exact")
+            .eq("ignorer_id", ignorer["id"])
+            .eq("ignored_user_id", ignored["id"])
+            .execute
+        )
+        return (
+            resp.count > 0
+            if hasattr(resp, "count") and resp.count is not None
+            else bool(resp.data)
+        )
+    except Exception as e:
+        debug_log(f"[DB ERROR] is_ignoring: {e}")
+        return False
+
+
+async def db_ignore_user(current_username: str, target_username_to_ignore: str) -> None:
+    if not supabase_client:
+        raise RuntimeError("Database not initialized")
+    debug_log(f"DB: ignore_user('{current_username}', '{target_username_to_ignore}')")
+
+    user = await db_get_user_by_username(current_username)
+    target = await db_get_user_by_username(target_username_to_ignore)
+
+    if not user or not target:
+        raise ValueError("User not found for ignore operation.")
+    if user["id"] == target["id"]:
+        raise ValueError("You cannot ignore yourself.")
+    if await db_is_ignoring(current_username, target_username_to_ignore):
+        raise ValueError(f"You are already ignoring @{target_username_to_ignore}.")
+
+    try:
+        await asyncio.to_thread(
+            supabase_client.table("ignored_users")
+            .insert({"ignorer_id": user["id"], "ignored_user_id": target["id"]})
+            .execute
+        )
+    except Exception as e:
+        debug_log(f"[DB ERROR] db_ignore_user: {e}")
+        if "violates unique constraint" in str(e) or "ignored_users_pkey" in str(e):
+            raise ValueError(f"You are already ignoring @{target_username_to_ignore}.")
+        elif 'violates check constraint "check_cannot_ignore_self"' in str(e):
+            raise ValueError("You cannot ignore yourself.")
+        raise e
+
+
+async def db_unignore_user(
+    current_username: str, target_username_to_unignore: str
+) -> None:
+    if not supabase_client:
+        raise RuntimeError("Database not initialized")
+    debug_log(
+        f"DB: unignore_user('{current_username}', '{target_username_to_unignore}')"
+    )
+    user = await db_get_user_by_username(current_username)
+    target = await db_get_user_by_username(target_username_to_unignore)
+
+    if not user or not target:
+        raise ValueError("User not found for unignore operation.")
+    if not await db_is_ignoring(current_username, target_username_to_unignore):
+        raise ValueError(f"You are not ignoring @{target_username_to_unignore} anyway.")
+
+    try:
+        await asyncio.to_thread(
+            supabase_client.table("ignored_users")
+            .delete()
+            .match({"ignorer_id": user["id"], "ignored_user_id": target["id"]})
+            .execute
+        )
+    except Exception as e:
+        debug_log(f"[DB ERROR] db_unignore_user: {e}")
+        raise e
+
+
+async def db_get_ignored_user_ids(username: str) -> List[str]:
+    if not supabase_client:
+        raise RuntimeError("Database not initialized")
+    user = await db_get_user_by_username(username)
+    if not user:
+        return []
+
+    try:
+        resp = await asyncio.to_thread(
+            supabase_client.table("ignored_users")
+            .select("ignored_user_id")
+            .eq("ignorer_id", user["id"])
+            .execute
+        )
+        return [item["ignored_user_id"] for item in resp.data] if resp.data else []
+    except Exception as e:
+        debug_log(f"[DB ERROR] db_get_ignored_user_ids for {username}: {e}")
+        return []
 
 
 async def db_post_eet(
@@ -285,94 +388,87 @@ async def db_post_eet(
 
 async def db_get_filtered_timeline_posts(
     current_username: str,
-    target_filter: Dict[str, str],
+    target_filter: Dict[str, Any],
     page: int = 1,
     page_size: int = DEFAULT_TIMELINE_PAGE_SIZE,
 ) -> List[Dict[str, Any]]:
     if not supabase_client:
         raise RuntimeError("Database not initialized")
     debug_log(
-        f"DB: get_filtered_timeline_posts('{current_username}', {target_filter}, page={page})"
+        f"DB: get_filtered_timeline_posts via RPC ('{current_username}', {target_filter}, page={page})"
     )
 
     user = await db_get_user_by_username(current_username)
     if not user:
+        debug_log(
+            f"DB: User '{current_username}' not found for timeline. Returning empty list."
+        )
         return []
     user_uuid = user["id"]
-    debug_log(f"DB: User ID for timeline: {user_uuid}")
 
-    offset = (page - 1) * page_size
-    if offset < 0:
-        offset = 0
+    rpc_name: Optional[str] = None
+    rpc_params: Dict[str, Any] = {
+        "input_user_id": user_uuid,
+        "p_page": page,
+        "p_page_size": page_size,
+    }
+
+    filter_type = target_filter.get("type")
+    filter_value = target_filter.get("value")
+
+    if filter_type == "mine":
+        rpc_name = "get_timeline"
+    elif filter_type == "all":
+        rpc_name = "get_all_posts_timeline"
+    elif filter_type == "channel":
+        if not filter_value or not isinstance(filter_value, str):
+            debug_log(
+                f"DB: Channel filter requested but invalid/missing channel value: {filter_value}. Returning empty list."
+            )
+            return []
+        rpc_name = "get_channel_timeline"
+        rpc_params["p_channel_tag"] = filter_value
+    elif filter_type == "user":
+        if not filter_value or not isinstance(filter_value, str):
+            debug_log(
+                f"DB: User filter requested but invalid/missing target username: {filter_value}. Returning empty list."
+            )
+            return []
+        rpc_name = "get_user_posts_timeline"
+        rpc_params["p_target_username"] = filter_value
+    else:
+        debug_log(f"DB: Unknown filter type '{filter_type}'. Returning empty list.")
+        return []
+
+    if not rpc_name:
+        debug_log("DB: Could not determine RPC name. Returning empty list.")
+        return []
 
     try:
-        if target_filter["type"] == "mine":
-            rpc_params = {
-                "input_user_id": user_uuid,
-                "p_page": page,
-                "p_page_size": page_size,
-            }
-            debug_log(f"DB: Calling RPC get_timeline with params: {rpc_params}")
-            resp = await asyncio.to_thread(
-                supabase_client.rpc("get_timeline", rpc_params).execute
-            )
-            posts_data = resp.data or []
-            debug_log(f"DB: RPC get_timeline returned {len(posts_data)} posts")
-
-            return [
-                {
-                    "id": p.get("post_id"),
-                    "user_id": p.get("author_id"),
-                    "content": p.get("eet_content"),
-                    "tags": p.get("eet_tags"),
-                    "users_mentioned": p.get("eet_users_mentioned"),
-                    "created_at": p.get("eet_created_at"),
-                    "username": p.get("author_username"),
-                    "display_name": p.get("author_display_name"),
-                }
-                for p in posts_data
-            ]
-
-        query = (
-            supabase_client.table("posts")
-            .select("*, author:user_id(username, display_name)")
-            .order("created_at", desc=True)
-        )
-
-        if target_filter["type"] == "all":
-            pass
-        elif target_filter["type"] == "channel":
-            hashtag_val = target_filter["value"]
-            query = query.cs("tags", [hashtag_val])
-        elif target_filter["type"] == "user":
-            target_user_obj = await db_get_user_by_username(target_filter["value"])
-            if not target_user_obj:
-                return []
-            query = query.eq("user_id", target_user_obj["id"])
-
+        debug_log(f"DB: Calling RPC '{rpc_name}' with params: {rpc_params}")
         resp = await asyncio.to_thread(
-            query.range(offset, offset + page_size - 1).execute
+            supabase_client.rpc(rpc_name, rpc_params).execute
         )
-
         posts_data = resp.data or []
-        processed_posts = []
-        for post in posts_data:
-            author_info = post.get("author")
-            if isinstance(author_info, dict):
-                post["username"] = author_info.get("username", "ghost")
-                post["display_name"] = author_info.get("display_name")
-            else:
-                author_details = await db_get_user_by_id(post["user_id"])
-                post["username"] = (
-                    author_details["username"] if author_details else "unknown"
-                )
-                post["display_name"] = (
-                    author_details.get("display_name") if author_details else None
-                )
-            processed_posts.append(post)
-        return processed_posts
+        debug_log(f"DB: RPC {rpc_name} returned {len(posts_data)} posts")
+
+        return [
+            {
+                "id": p.get("post_id"),
+                "user_id": p.get("author_id"),
+                "content": p.get("eet_content"),
+                "tags": p.get("eet_tags") or [],
+                "users_mentioned": p.get("eet_users_mentioned") or [],
+                "created_at": p.get("eet_created_at"),
+                "username": p.get("author_username"),
+                "display_name": p.get("author_display_name"),
+            }
+            for p in posts_data
+        ]
     except Exception as e:
-        debug_log(f"[DB ERROR] get_filtered_timeline_posts: {e}")
+        debug_log(
+            f"[DB ERROR] Calling RPC {rpc_name} for {current_username} with {target_filter}: {e}"
+        )
         if ITTER_DEBUG_MODE:
             debug_log(traceback.format_exc())
         return []

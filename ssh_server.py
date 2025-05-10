@@ -399,9 +399,9 @@ class ItterShell(asyncssh.SSHServerSession):
             "  eet <text>                     - Post an eet (max 180 chars).\r\n"
             "  timeline [mine|all|#chan|@user] [<page>] - Show eets (Default: all, page 1).\r\n"
             "  watch [mine|all|#chan|@user]   - Live timeline view (Default: all).\r\n"
-            "  follow @<user>                - Follow a user.\r\n"
-            "  unfollow @<user>              - Unfollow a user.\r\n"
-            "  profile [@<user>]             - View user profile (yours or another's).\r\n"
+            "  [follow|unfollow] @<user>      - Follow a user (or stop following).\r\n"
+            "  [ignore|unignore] @<user>      - Ignore a user (or stop ignoring).\r\n"
+            "  profile [@<user>]              - View user profile (yours or another's).\r\n"
             "  profile edit -name <Name> -email <Email> - Edit your profile.\r\n"
             "  help                           - Show this help message.\r\n"
             "  clear                          - Clear the screen.\r\n"
@@ -554,6 +554,30 @@ class ItterShell(asyncssh.SSHServerSession):
                 else:
                     await db.db_unfollow_user(self.username, target_user)
                     self._write_to_channel(f"Unfollowed @{target_user}.")
+            elif cmd == "ignore":
+                target_user_to_ignore = (
+                    user_refs[0] if user_refs else raw_text.strip().lstrip("@")
+                )
+                if not target_user_to_ignore:
+                    self._write_to_channel("Usage: ignore @<username>")
+                elif target_user_to_ignore == self.username:
+                    self._write_to_channel("You cannot ignore yourself. (That's what my psychologist said)")
+                else:
+                    await db.db_ignore_user(self.username, target_user_to_ignore)
+                    self._write_to_channel(
+                        f"Okay, @{target_user_to_ignore} will now be ignored. Their posts won't appear in your timelines. Phew."
+                    )
+            elif cmd == "unignore":
+                target_user_to_unignore = (
+                    user_refs[0] if user_refs else raw_text.strip().lstrip("@")
+                )
+                if not target_user_to_unignore:
+                    self._write_to_channel("Usage: unignore @<username>")
+                else:
+                    await db.db_unignore_user(self.username, target_user_to_unignore)
+                    self._write_to_channel(
+                        f"Okay, @{target_user_to_unignore} is forgiven and will no longer be ignored. You'll see their posts again."
+                    )
             elif cmd == "profile":
                 await self._handle_profile_command(raw_text, user_refs)
             elif cmd == "help":
