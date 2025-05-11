@@ -112,7 +112,7 @@ class ItterSSHServer(asyncssh.SSHServer):
             # The client will typically show "Permission denied".
             self.current_username = None
             utils.debug_log(
-                f"begin_auth returning False for non-existent login user '{username}'. Final state: is_registration_attempt={self.is_registration_attempt}, current_username='{self.current_username}', registration_candidate='{self.registration_candidate_candidate}'"
+                f"begin_auth returning False for non-existent login user '{username}'. Final state: is_registration_attempt={self.is_registration_attempt}, current_username='{self.current_username}', registration_candidate='{self.registration_username_candidate}'"
             )
             return False
 
