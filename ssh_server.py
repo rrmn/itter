@@ -339,6 +339,12 @@ class ItterShell(asyncssh.SSHServerSession):
             prompt_text = self._get_prompt_text()
             self._write_to_channel(prompt_text, newline=False)
 
+    def _redraw_prompt_and_buffer(self):
+        if self._chan and self.username:
+            self._prompt()
+            if self._input_buffer:
+                self._write_to_channel(self._input_buffer, newline=False)
+
     def _redraw_input_line(self):
         prompt_text = self._get_prompt_text()
         self._write_to_channel("\r", newline=False)
@@ -757,8 +763,10 @@ class ItterShell(asyncssh.SSHServerSession):
             utils.debug_log("Timeline refresh loop cancelled.")
         except Exception as e:
             utils.debug_log(f"Error in timeline refresh loop: {e}")
-            if self._is_watching_timeline:
-                self._write_to_channel(f"ERROR: Live timeline update error: {e}")
+            if self._is_watching_timeline and self._chan:
+                self._clear_screen()
+                self._write_to_channel(f"ERROR: Live timeline update error: {e}\r\n")
+                self._redraw_prompt_and_buffer()
 
     async def _render_and_display_timeline(
         self, page: int, is_live_update: bool = False
@@ -770,21 +778,39 @@ class ItterShell(asyncssh.SSHServerSession):
                 self.username, self._current_target_filter, page=page
             )
         except Exception as e:
-            self._write_to_channel(f"Timeline Error: {e}")
+            if self._is_watching_timeline and self._chan:
+                self._clear_screen()
+                self._write_to_channel(f"Timeline Error: {e}\r\n")
+                self._redraw_prompt_and_buffer()
+            elif self._chan:
+                self._write_to_channel(f"Timeline Error: {e}")
             return
+
+        formatted_output = await asyncio.to_thread(
+            self._format_timeline_output, eets, page
+        )
 
         if is_live_update:
             self._clear_screen()
+            self._write_to_channel(formatted_output, newline=True)
+            self._redraw_prompt_and_buffer()
+        else:
+            self._write_to_channel(formatted_output, newline=True)
 
+
+    def _format_timeline_output(self, eets: List[Dict[str, Any]], page: int) -> str:
         time_w = 12
         user_w = 25
         sep_w = 3
         eet_w = max(10, self._term_width - time_w - user_w - (sep_w * 2))
-        lines = [f"{'Time':<{time_w}} | {'User':<{user_w}} | {'Eet':<{eet_w}}"]
-        lines.append("-" * min(self._term_width, time_w + user_w + eet_w + (sep_w * 2)))
+
+        output_lines = [f"{'Time':<{time_w}} | {'User':<{user_w}} | {'Eet':<{eet_w}}"]
+        output_lines.append(
+            "-" * min(self._term_width, time_w + user_w + eet_w + (sep_w * 2))
+        )
 
         if not eets:
-            lines.append(" No eets found." if page == 1 else " End of timeline.")
+            output_lines.append(" No eets found." if page == 1 else " End of timeline.")
         else:
             for eet in eets:
                 t = utils.time_ago(eet.get("created_at"))
@@ -793,24 +819,27 @@ class ItterShell(asyncssh.SSHServerSession):
                 u = f"{disp} ({u_raw})" if disp else u_raw
                 if len(u) > user_w:
                     u = u[: user_w - 3] + "..."
+
                 cont = eet.get("content", "").replace("\r", "").replace("\n", " ")
+
                 wrapper = textwrap.TextWrapper(width=eet_w, subsequent_indent="  ")
-                cont_lines = wrapper.wrap(text=cont)
-                lines.append(
-                    f"{t:<{time_w}} | {u:<{user_w}} | {cont_lines[0] if cont_lines else '':<{eet_w}}"
+                cont_lines_plain = wrapper.wrap(text=cont)
+
+                first_line_content = cont_lines_plain[0] if cont_lines_plain else ""
+                output_lines.append(
+                    f"{t:<{time_w}} | {u:<{user_w}} | {utils.format_eet_content(first_line_content):<{eet_w}}"
                 )
+
                 indent = " " * (time_w + sep_w + user_w + sep_w)
-                for i in range(1, len(cont_lines)):
-                    lines.append(
-                        f"{indent}{cont_lines[i]:<{eet_w}}"[: self._term_width]
+                for i in range(1, len(cont_lines_plain)):
+                    output_lines.append(
+                        f"{indent}{cont_lines_plain[i]:<{eet_w}}"[: self._term_width]
                     )
 
-        full_output = "\r\n".join(lines)
-        self._write_to_channel(full_output, newline=True)
-
+        footer_lines = []
         if self._is_watching_timeline:
             status = f"Live updating... Target: {self._current_target_filter['type']}='{self._current_target_filter['value'] or 'all'}'. (exit to stop)"
-            self._write_to_channel(status, newline=True)
+            footer_lines.append(status)
         else:
             footer = ""
             if not eets and page > 1:
@@ -820,9 +849,13 @@ class ItterShell(asyncssh.SSHServerSession):
             elif eets:
                 footer = f"Page {page}. End of results."
             if footer:
-                self._write_to_channel(footer, newline=True)
+                footer_lines.append(footer)
 
-    # Using your original handle_new_post_realtime as per our discussion
+        if footer_lines:
+            output_lines.append("\r\n" + "\r\n".join(footer_lines))
+
+        return "\r\n".join(output_lines)
+
     async def handle_new_post_realtime(self, post_record: Dict[str, Any]):
         if not self._is_watching_timeline or not self.username:
             return
@@ -837,9 +870,13 @@ class ItterShell(asyncssh.SSHServerSession):
         elif target_type == "mine":
             details = await db.db_get_user_by_id(post_author_id)
             if details:
-                refresh = (
-                    details["username"] == self.username
-                ) or await db.db_is_following(self.username, details["username"])
+                current_user_obj = await db.db_get_user_by_username(self.username)
+                if current_user_obj and post_author_id == current_user_obj["id"]:
+                    refresh = True
+                elif details and await db.db_is_following(
+                    self.username, details["username"]
+                ):
+                    refresh = True
         elif target_type == "user":
             details = await db.db_get_user_by_id(post_author_id)
             if details and details["username"] == target_value:
