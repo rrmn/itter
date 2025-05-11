@@ -837,6 +837,7 @@ class ItterShell(asyncssh.SSHServerSession):
             self._write_to_channel(formatted_output, newline=True)
             self._redraw_prompt_and_buffer()
         else:
+            self._clear_screen()
             self._write_to_channel(formatted_output, newline=True)
 
 
