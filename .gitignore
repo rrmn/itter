@@ -1,6 +1,6 @@
 # mac
 .DS_Store
-fastapi_project*
+project_*
 .env*
 *.code-workspace
 __pycache__
