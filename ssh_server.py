@@ -554,6 +554,13 @@ class ItterShell(asyncssh.SSHServerSession):
                         self.username, content, hashtags, user_refs, self._client_ip
                     )
                     self._write_to_channel("Eet posted!")
+                    if self._is_watching_timeline:
+                        utils.debug_log(
+                            "Eet posted while watching, triggering immediate timeline refresh."
+                        )
+                        await self._render_and_display_timeline(
+                            page=1, is_live_update=True
+                        )
             elif cmd == "timeline" or cmd == "watch":
                 self._current_timeline_page = 1
                 target_specifier_text = raw_text
@@ -643,7 +650,10 @@ class ItterShell(asyncssh.SSHServerSession):
                 self._show_help()
             elif cmd == "clear":
                 self._clear_screen()
-                self._prompt()
+                if self._is_watching_timeline:
+                    await self._render_and_display_timeline(page=1, is_live_update=True)
+                else:
+                    self._prompt()
                 return
             elif cmd == "exit":
                 await self._handle_exit_command()
