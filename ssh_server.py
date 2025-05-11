@@ -112,7 +112,7 @@ class ItterSSHServer(asyncssh.SSHServer):
             # The client will typically show "Permission denied".
             self.current_username = None
             utils.debug_log(
-                f"begin_auth returning False for non-existent login user '{username}'. Final state: is_registration_attempt={self.is_registration_attempt}, current_username='{self.current_username}', registration_candidate='{self.registration_candidate_candidate}'"
+                f"begin_auth returning False for non-existent login user '{username}'. Final state: is_registration_attempt={self.is_registration_attempt}, current_username='{self.current_username}', registration_candidate='{self.registration_username_candidate}'"
             )
             return False
 
@@ -512,6 +512,38 @@ class ItterShell(asyncssh.SSHServerSession):
             elif char == "\x04":
                 self._write_to_channel("^D\r\n", newline=False)
                 self.close()
+            elif char == "\x15":  # Ctrl+U
+                if self._input_buffer:
+                    current_prompt_len = len(self._get_prompt_text())
+                    old_input_buffer_len = len(self._input_buffer)
+                    self._write_to_channel("\r", newline=False)
+                    self._write_to_channel(
+                        " " * (current_prompt_len + old_input_buffer_len), newline=False
+                    )
+                    self._write_to_channel("\r", newline=False)
+                    self._input_buffer = ""
+                    self._prompt()
+            elif char == "\x17":  # Ctrl+W
+                if self._input_buffer:
+                    old_input_buffer_len = len(self._input_buffer)
+
+                    i = len(self._input_buffer) - 1
+                    while i >= 0 and self._input_buffer[i].isspace():
+                        i -= 1
+                    j = i
+                    while j >= 0 and not self._input_buffer[j].isspace():
+                        j -= 1
+
+                    self._input_buffer = self._input_buffer[: j + 1]
+
+                    current_prompt_len = len(self._get_prompt_text())
+                    self._write_to_channel("\r", newline=False)
+                    self._write_to_channel(
+                        " " * (current_prompt_len + old_input_buffer_len), newline=False
+                    )
+                    self._write_to_channel("\r", newline=False)
+                    self._prompt()
+                    self._write_to_channel(self._input_buffer, newline=False)
             elif char.isprintable():
                 self._input_buffer += char
                 self._write_to_channel(char, newline=False)
@@ -554,6 +586,13 @@ class ItterShell(asyncssh.SSHServerSession):
                         self.username, content, hashtags, user_refs, self._client_ip
                     )
                     self._write_to_channel("Eet posted!")
+                    if self._is_watching_timeline:
+                        utils.debug_log(
+                            "Eet posted while watching, triggering immediate timeline refresh."
+                        )
+                        await self._render_and_display_timeline(
+                            page=1, is_live_update=True
+                        )
             elif cmd == "timeline" or cmd == "tl" or cmd == "watch":
                 self._current_timeline_page = 1
                 target_specifier_text = raw_text
@@ -643,7 +682,10 @@ class ItterShell(asyncssh.SSHServerSession):
                 self._show_help()
             elif cmd == "clear":
                 self._clear_screen()
-                self._prompt()
+                if self._is_watching_timeline:
+                    await self._render_and_display_timeline(page=1, is_live_update=True)
+                else:
+                    self._prompt()
                 return
             elif cmd == "exit":
                 await self._handle_exit_command()
@@ -795,6 +837,7 @@ class ItterShell(asyncssh.SSHServerSession):
             self._write_to_channel(formatted_output, newline=True)
             self._redraw_prompt_and_buffer()
         else:
+            self._clear_screen()
             self._write_to_channel(formatted_output, newline=True)
 
 

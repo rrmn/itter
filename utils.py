@@ -94,11 +94,36 @@ def parse_target_filter(raw_text: str) -> Dict[str, Optional[str]]:
 
 # --- Eet Content Formatting ---
 def format_eet_content(content: str) -> str:
-    """Applies ANSI color codes to hashtags and mentions in eet content."""
-    # Highlight hashtags (Magenta)
-    highlighted_content = HASHTAG_RE.sub(rf"{FG_MAGENTA}#\1{RESET}", content)
-    # Highlight mentions (Cyan) - apply after hashtags
-    highlighted_content = USER_RE.sub(rf"{FG_CYAN}@\1{RESET}", highlighted_content)
+    """Applies ANSI color codes to all hashtags and mentions in eet content."""
+
+    # Define the combined regex pattern string directly inside the function.
+    # This pattern will find either a hashtag or a username.
+    # Group 1: '#' (if hashtag)
+    # Group 2: hashtag text (if hashtag)
+    # Group 3: '@' (if username)
+    # Group 4: username text (if username)
+    combined_pattern_str = r"(?<!\w)(?:(#)(\w(?:[\w-]*\w)?)|(@)(\w{3,20}))"
+
+    # Replacer that decides what to do with each match.
+    def replacer(match_obj: re.Match) -> str:
+        if match_obj.group(1) == "#":  # It's a hashtag
+            hashtag_char = match_obj.group(1)  # The '#'
+            hashtag_text = match_obj.group(2)  # The tag content
+            # FG_MAGENTA and RESET are from your global definitions
+            return f"{FG_MAGENTA}{hashtag_char}{hashtag_text}{RESET}"
+        elif match_obj.group(3) == "@":  # It's a username
+            mention_char = match_obj.group(3)  # The '@'
+            mention_text = match_obj.group(4)  # The username
+            # FG_CYAN and RESET are from your global definitions
+            return f"{FG_CYAN}{mention_char}{mention_text}{RESET}"
+        # This fallback should ideally not be reached if the pattern is correct
+        # and only matches what we intend for hashtags or usernames.
+        return match_obj.group(0)
+
+    # Perform the substitution using the combined pattern and the local replacer.
+    # This replaces your two sequential .sub() calls.
+    highlighted_content = re.sub(combined_pattern_str, replacer, content)
+
     return highlighted_content
 
 

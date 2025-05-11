@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Define the output file
-OUTPUT_FILE="fastapi_project_files_with_contents.txt"
+OUTPUT_FILE="project_files_with_contents.txt"
 
 # Start fresh by clearing the output file if it exists
 rm -f "$OUTPUT_FILE"
@@ -10,7 +10,7 @@ rm -f "$OUTPUT_FILE"
 PROJECT_DIR=$(pwd)
 
 # Add a GPT-friendly Markdown header
-echo -e "# FastAPI Project File List with Contents\n" > "$OUTPUT_FILE"
+echo -e "# Project File List with Contents\n" > "$OUTPUT_FILE"
 
 # Find all matching files and count them for progress tracking
 FILES=($(find "$PROJECT_DIR" -type f \( -name "*.py" -o -name "*.html" \) \
