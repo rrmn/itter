@@ -512,6 +512,38 @@ class ItterShell(asyncssh.SSHServerSession):
             elif char == "\x04":
                 self._write_to_channel("^D\r\n", newline=False)
                 self.close()
+            elif char == "\x15":  # Ctrl+U
+                if self._input_buffer:
+                    current_prompt_len = len(self._get_prompt_text())
+                    old_input_buffer_len = len(self._input_buffer)
+                    self._write_to_channel("\r", newline=False)
+                    self._write_to_channel(
+                        " " * (current_prompt_len + old_input_buffer_len), newline=False
+                    )
+                    self._write_to_channel("\r", newline=False)
+                    self._input_buffer = ""
+                    self._prompt()
+            elif char == "\x17":  # Ctrl+W
+                if self._input_buffer:
+                    old_input_buffer_len = len(self._input_buffer)
+
+                    i = len(self._input_buffer) - 1
+                    while i >= 0 and self._input_buffer[i].isspace():
+                        i -= 1
+                    j = i
+                    while j >= 0 and not self._input_buffer[j].isspace():
+                        j -= 1
+
+                    self._input_buffer = self._input_buffer[: j + 1]
+
+                    current_prompt_len = len(self._get_prompt_text())
+                    self._write_to_channel("\r", newline=False)
+                    self._write_to_channel(
+                        " " * (current_prompt_len + old_input_buffer_len), newline=False
+                    )
+                    self._write_to_channel("\r", newline=False)
+                    self._prompt()
+                    self._write_to_channel(self._input_buffer, newline=False)
             elif char.isprintable():
                 self._input_buffer += char
                 self._write_to_channel(char, newline=False)
