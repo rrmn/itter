@@ -429,7 +429,7 @@ class ItterShell(asyncssh.SSHServerSession):
         help_text = (
             "\r\nitter.sh Commands:\r\n"
             "  eet <text>                     - Post an eet (max 180 chars).\r\n"
-            "  timeline [mine|all|#chan|@user] [<page>] - Show eets (Default: all, page 1).\r\n"
+            "  timeline [mine|all|#chan|@user] [<page>] - Show eets (Default: all, page 1). Alias: tl\r\n"
             "  watch [mine|all|#chan|@user]   - Live timeline view (Default: all).\r\n"
             "  [follow|unfollow] @<user>      - Follow a user (or stop following).\r\n"
             "  [ignore|unignore] @<user>      - Ignore a user (or stop ignoring).\r\n"
@@ -554,7 +554,7 @@ class ItterShell(asyncssh.SSHServerSession):
                         self.username, content, hashtags, user_refs, self._client_ip
                     )
                     self._write_to_channel("Eet posted!")
-            elif cmd == "timeline" or cmd == "watch":
+            elif cmd == "timeline" or cmd == "tl" or cmd == "watch":
                 self._current_timeline_page = 1
                 target_specifier_text = raw_text
                 parts = raw_text.split()
