@@ -406,7 +406,9 @@ class ItterShell(asyncssh.SSHServerSession):
             success_msg = (
                 f"\r\nRegistration successful for user '{self._reg_username_candidate}'!\r\n"
                 f"You can now log in using:\r\n"
-                f"  ssh -p {config.SSH_PORT} -i /path/to/your/private_key {self._reg_username_candidate}@{config.SSH_HOST}\r\n"
+                f"  ssh {self._reg_username_candidate}@{config.SSH_HOST}\r\n"
+                f"  or"
+                f"  ssh -i /path/to/your/private_key {self._reg_username_candidate}@{config.SSH_HOST}"
             )
             self._write_to_channel(success_msg)
             utils.debug_log(
