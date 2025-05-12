@@ -404,11 +404,10 @@ class ItterShell(asyncssh.SSHServerSession):
         try:
             await db.db_create_user(self._reg_username_candidate, self._reg_public_key)
             success_msg = (
-                f"\r\nRegistration successful for user '{self._reg_username_candidate}'!\r\n"
-                f"You can now log in using:\r\n"
-                f"  ssh {self._reg_username_candidate}@{config.SSH_HOST}\r\n"
-                f"  or"
-                f"  ssh -i /path/to/your/private_key {self._reg_username_candidate}@{config.SSH_HOST}"
+                f"\r\nRegistration successful as user '{self._reg_username_candidate}'!\r\n"
+                f"You can now log in via:\r\n"
+                f"  ssh {self._reg_username_candidate}@itter.sh\r\n"
+                f"  or ssh -i /path/to/your/private_key {self._reg_username_candidate}@itter.sh"
             )
             self._write_to_channel(success_msg)
             utils.debug_log(
