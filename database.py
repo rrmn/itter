@@ -229,7 +229,7 @@ async def db_unfollow_user(
     if not user or not target:
         raise ValueError("User not found for unfollow operation.")
     if user["id"] == target["id"]:
-        raise ValueError("You will follow yourself everywhere. This is life.")
+        raise ValueError("No chance. You cannot get rid of yourself. This is life.")
     if not await db_is_following(current_username, target_username_to_unfollow):
         raise ValueError(
             f"You are not following @{target_username_to_unfollow} anyway."

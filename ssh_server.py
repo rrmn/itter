@@ -645,7 +645,7 @@ class ItterShell(asyncssh.SSHServerSession):
                     self._write_to_channel("Usage: follow @<username>")
                 else:
                     await db.db_follow_user(self.username, target_user)
-                    self._write_to_channel(f"Following @{target_user}.")
+                    self._write_to_channel(f"Following @{target_user}. You will now see their posts on your 'mine' page.")
             elif cmd == "unfollow" or cmd == "uf":
                 target_user = (
                     user_refs[0] if user_refs else raw_text.strip().lstrip("@")
@@ -654,7 +654,7 @@ class ItterShell(asyncssh.SSHServerSession):
                     self._write_to_channel("Usage: unfollow @<username>")
                 else:
                     await db.db_unfollow_user(self.username, target_user)
-                    self._write_to_channel(f"Unfollowed @{target_user}.")
+                    self._write_to_channel(f"Unfollowed @{target_user}. They won't show up on your 'mine' page anymore.")
             elif cmd == "ignore" or cmd == "i":
                 target_user_to_ignore = (
                     user_refs[0] if user_refs else raw_text.strip().lstrip("@")
@@ -759,6 +759,7 @@ class ItterShell(asyncssh.SSHServerSession):
                     + f"  Followers:    {stats['follower_count']}\r\n"
                     + f"---------------------------\r\n"
                 )
+                self._clear_screen()
                 self._write_to_channel(profile_output)
             except ValueError as ve:
                 self._write_to_channel(f"Error: {ve}")
