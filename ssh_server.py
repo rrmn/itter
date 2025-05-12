@@ -12,6 +12,8 @@ import utils
 import config
 import command_history
 
+from utils import BOLD, FG_BRIGHT_BLACK, RESET
+
 # Global reference - will be set by main.py
 # Use forward reference for type hint to avoid circular import if needed later
 active_sessions_ref: Optional[Dict[str, "ItterShell"]] = None
@@ -427,17 +429,17 @@ class ItterShell(asyncssh.SSHServerSession):
 
     def _show_help(self):
         help_text = (
-            "\r\nitter.sh Commands:\r\n"
-            "  eet <text>                     - Post an eet (max 180 chars).\r\n"
-            "  timeline [mine|all|#chan|@user] [<page>] - Show eets (Default: all, page 1). Alias: tl\r\n"
-            "  watch [mine|all|#chan|@user]   - Live timeline view (Default: all).\r\n"
-            "  [follow|unfollow] @<user>      - Follow a user (or stop following).\r\n"
-            "  [ignore|unignore] @<user>      - Ignore a user (or stop ignoring).\r\n"
-            "  profile [@<user>]              - View user profile (yours or another's).\r\n"
-            "  profile edit -name <Name> -email <Email> - Edit your profile.\r\n"
-            "  help                           - Show this help message.\r\n"
-            "  clear                          - Clear the screen.\r\n"
-            "  exit                           - Exit watch mode or itter.sh.\r\n"
+            f"\r\nitter.sh Commands:\r\n"
+            f"  {BOLD}e{RESET}et {FG_BRIGHT_BLACK}<text>{RESET}                     - Post an eet (max 180 chars).\r\n"
+            f"  {BOLD}w{RESET}atch {FG_BRIGHT_BLACK}[mine|all|#chan|@user]{RESET}   - Live timeline view (Default: all).\r\n"
+            f"  {BOLD}t{RESET}ime{BOLD}l{RESET}ine {FG_BRIGHT_BLACK}[mine|all|#chan|@user] [<page>]{RESET} - Show eets (Default: all, 1).\r\n"
+            f"  [{BOLD}f{RESET}ollow|{BOLD}u{RESET}n{BOLD}f{RESET}ollow] {FG_BRIGHT_BLACK}@<user>{RESET}      - Follow a user (or stop following).\r\n"
+            f"  [{BOLD}i{RESET}gnore|{BOLD}u{RESET}n{BOLD}i{RESET}gnore] {FG_BRIGHT_BLACK}@<user>{RESET}      - Ignore a user (or stop ignoring).\r\n"
+            f"  {BOLD}p{RESET}rofile {FG_BRIGHT_BLACK}[@<user>]{RESET}              - View user profile (yours or another's).\r\n"
+            f"  {BOLD}p{RESET}rofile {BOLD}e{RESET}dit {FG_BRIGHT_BLACK}-name <Name> -email <Email>{RESET} - Edit your profile.\r\n"
+            f"  {BOLD}h{RESET}elp                           - Show this help message.\r\n"
+            f"  {BOLD}c{RESET}lear                          - Clear the screen.\r\n"
+            f"  {BOLD}e{RESET}xit                           - Exit watch mode or itter.sh.\r\n"
         )
         self._write_to_channel(help_text)
 
@@ -593,7 +595,7 @@ class ItterShell(asyncssh.SSHServerSession):
                         await self._render_and_display_timeline(
                             page=1, is_live_update=True
                         )
-            elif cmd == "timeline" or cmd == "tl" or cmd == "watch":
+            elif cmd == "timeline" or cmd == "tl" or cmd == "watch" or cmd == "w":
                 self._current_timeline_page = 1
                 target_specifier_text = raw_text
                 parts = raw_text.split()
@@ -624,7 +626,7 @@ class ItterShell(asyncssh.SSHServerSession):
                 utils.debug_log(
                     f"Timeline/Watch target set to: {self._current_target_filter}"
                 )
-                if cmd == "watch":
+                if cmd == "watch" or cmd == "w":
                     self._is_watching_timeline = True
                     await self._start_live_timeline_view()
                     return
@@ -633,7 +635,7 @@ class ItterShell(asyncssh.SSHServerSession):
                     await self._render_and_display_timeline(
                         page=self._current_timeline_page
                     )
-            elif cmd == "follow":
+            elif cmd == "follow" or cmd == "f":
                 target_user = (
                     user_refs[0] if user_refs else raw_text.strip().lstrip("@")
                 )
@@ -642,7 +644,7 @@ class ItterShell(asyncssh.SSHServerSession):
                 else:
                     await db.db_follow_user(self.username, target_user)
                     self._write_to_channel(f"Following @{target_user}.")
-            elif cmd == "unfollow":
+            elif cmd == "unfollow" or cmd == "uf":
                 target_user = (
                     user_refs[0] if user_refs else raw_text.strip().lstrip("@")
                 )
@@ -651,7 +653,7 @@ class ItterShell(asyncssh.SSHServerSession):
                 else:
                     await db.db_unfollow_user(self.username, target_user)
                     self._write_to_channel(f"Unfollowed @{target_user}.")
-            elif cmd == "ignore":
+            elif cmd == "ignore" or cmd == "i":
                 target_user_to_ignore = (
                     user_refs[0] if user_refs else raw_text.strip().lstrip("@")
                 )
@@ -664,7 +666,7 @@ class ItterShell(asyncssh.SSHServerSession):
                     self._write_to_channel(
                         f"Okay, @{target_user_to_ignore} will now be ignored. Their posts won't appear in your timelines. Phew."
                     )
-            elif cmd == "unignore":
+            elif cmd == "unignore" or cmd == "ui":
                 target_user_to_unignore = (
                     user_refs[0] if user_refs else raw_text.strip().lstrip("@")
                 )
@@ -675,19 +677,19 @@ class ItterShell(asyncssh.SSHServerSession):
                     self._write_to_channel(
                         f"Okay, @{target_user_to_unignore} is forgiven and will no longer be ignored. You'll see their posts again."
                     )
-            elif cmd == "profile":
+            elif cmd == "profile" or cmd == "p":
                 await self._handle_profile_command(raw_text, user_refs)
-            elif cmd == "help":
+            elif cmd == "help" or cmd == "h":
                 self._display_welcome_banner()
                 self._show_help()
-            elif cmd == "clear":
+            elif cmd == "clear" or cmd == "c":
                 self._clear_screen()
                 if self._is_watching_timeline:
                     await self._render_and_display_timeline(page=1, is_live_update=True)
                 else:
                     self._prompt()
                 return
-            elif cmd == "exit":
+            elif cmd == "exit" or cmd == "e" or cmd == "q":
                 await self._handle_exit_command()
                 return
             else:
@@ -707,7 +709,7 @@ class ItterShell(asyncssh.SSHServerSession):
 
     async def _handle_profile_command(self, raw_text: str, user_refs: List[str]):
         args = raw_text.split()
-        if args and args[0].lower() == "edit":
+        if args and (args[0].lower() == "edit" or args[0].lower() == "e"):
             new_display_name = None
             new_email = None
             try:
