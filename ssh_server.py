@@ -441,7 +441,7 @@ class ItterShell(asyncssh.SSHServerSession):
             f"  {BOLD}p{RESET}rofile {BOLD}e{RESET}dit {FG_BRIGHT_BLACK}-name <Name> -email <Email>{RESET} - Edit your profile.\r\n"
             f"  {BOLD}h{RESET}elp                           - Show this help message.\r\n"
             f"  {BOLD}c{RESET}lear                          - Clear the screen.\r\n"
-            f"  {BOLD}e{RESET}xit                           - Exit watch mode or itter.sh.\r\n"
+            f"  e{BOLD}x{RESET}it                           - Exit watch mode or itter.sh.\r\n"
         )
         self._write_to_channel(help_text)
 
@@ -577,7 +577,7 @@ class ItterShell(asyncssh.SSHServerSession):
             # Add command to history
             self._command_history.add((cmd + " " + raw_text.strip()).strip())
 
-            if cmd == "eet":
+            if cmd == "eet" or cmd == "e":
                 content = raw_text.strip()
                 if not content:
                     self._write_to_channel("Usage: eet <text>")
@@ -691,7 +691,7 @@ class ItterShell(asyncssh.SSHServerSession):
                 else:
                     self._prompt()
                 return
-            elif cmd == "exit" or cmd == "e" or cmd == "q":
+            elif cmd == "exit" or cmd == "x":
                 await self._handle_exit_command()
                 return
             else:
@@ -750,7 +750,10 @@ class ItterShell(asyncssh.SSHServerSession):
             try:
                 stats = await db.db_get_profile_stats(profile_username)
                 profile_output = (
-                    f"\r\n--- Profile: @{stats['username']} ---\r\n"
+                    "\r\n"
+                    + "\r\n"
+                    + "\r\n"
+                    + f"\r\n--- Profile: @{stats['username']} ---\r\n"
                     + f"  Display Name: {stats.get('display_name', 'N/A')}\r\n"
                     + f"  Email:        {stats.get('email', 'N/A')}\r\n"
                     + f"  Joined:       {utils.time_ago(stats.get('joined_at'))}\r\n"
@@ -760,6 +763,7 @@ class ItterShell(asyncssh.SSHServerSession):
                     + f"---------------------------\r\n"
                 )
                 self._clear_screen()
+                self._display_welcome_banner()
                 self._write_to_channel(profile_output)
             except ValueError as ve:
                 self._write_to_channel(f"Error: {ve}")
