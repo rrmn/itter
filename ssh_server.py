@@ -878,7 +878,7 @@ class ItterShell(asyncssh.SSHServerSession):
                 indent = " " * (time_w + sep_w + user_w + sep_w)
                 for i in range(1, len(cont_lines_plain)):
                     output_lines.append(
-                        f"{indent}{cont_lines_plain[i]:<{eet_w}}"[: self._term_width]
+                        f"{indent}{utils.format_eet_content(cont_lines_plain[i]):<{eet_w}}"
                     )
 
         footer_lines = []
