@@ -1,0 +1,112 @@
+[
+    {
+        "table_name": "follows",
+        "column_name": "follower_id",
+        "data_type": "uuid"
+    },
+    {
+        "table_name": "follows",
+        "column_name": "following_id",
+        "data_type": "uuid"
+    },
+    {
+        "table_name": "follows",
+        "column_name": "created_at",
+        "data_type": "timestamp with time zone"
+    },
+    {
+        "table_name": "globally_blocked_users",
+        "column_name": "user_id",
+        "data_type": "uuid"
+    },
+    {
+        "table_name": "globally_blocked_users",
+        "column_name": "blocked_at",
+        "data_type": "timestamp with time zone"
+    },
+    {
+        "table_name": "globally_blocked_users",
+        "column_name": "reason",
+        "data_type": "text"
+    },
+    {
+        "table_name": "ignored_users",
+        "column_name": "ignorer_id",
+        "data_type": "uuid"
+    },
+    {
+        "table_name": "ignored_users",
+        "column_name": "ignored_user_id",
+        "data_type": "uuid"
+    },
+    {
+        "table_name": "ignored_users",
+        "column_name": "created_at",
+        "data_type": "timestamp with time zone"
+    },
+    {
+        "table_name": "posts",
+        "column_name": "id",
+        "data_type": "uuid"
+    },
+    {
+        "table_name": "posts",
+        "column_name": "user_id",
+        "data_type": "uuid"
+    },
+    {
+        "table_name": "posts",
+        "column_name": "content",
+        "data_type": "text"
+    },
+    {
+        "table_name": "posts",
+        "column_name": "tags",
+        "data_type": "ARRAY"
+    },
+    {
+        "table_name": "posts",
+        "column_name": "users_mentioned",
+        "data_type": "ARRAY"
+    },
+    {
+        "table_name": "posts",
+        "column_name": "created_at",
+        "data_type": "timestamp with time zone"
+    },
+    {
+        "table_name": "posts",
+        "column_name": "hashed_ip",
+        "data_type": "text"
+    },
+    {
+        "table_name": "users",
+        "column_name": "id",
+        "data_type": "uuid"
+    },
+    {
+        "table_name": "users",
+        "column_name": "username",
+        "data_type": "text"
+    },
+    {
+        "table_name": "users",
+        "column_name": "public_key",
+        "data_type": "text"
+    },
+    {
+        "table_name": "users",
+        "column_name": "display_name",
+        "data_type": "text"
+    },
+    {
+        "table_name": "users",
+        "column_name": "email",
+        "data_type": "text"
+    },
+    {
+        "table_name": "users",
+        "column_name": "created_at",
+        "data_type": "timestamp with time zone"
+    }
+]
