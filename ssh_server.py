@@ -12,7 +12,7 @@ import utils
 import config
 import command_history
 
-from utils import BOLD, FG_BRIGHT_BLACK, RESET
+from utils import BOLD, FG_BRIGHT_BLACK, RESET, FG_CYAN, FG_MAGENTA
 
 # Global reference - will be set by main.py
 # Use forward reference for type hint to avoid circular import if needed later
@@ -407,9 +407,9 @@ class ItterShell(asyncssh.SSHServerSession):
                 f"\r\nRegistration successful as user '{self._reg_username_candidate}'!\r\n"
                 f"You can now log in via:\r\n"
                 f"\r\n"
-                f"  > {BOLD}ssh {self._reg_username_candidate}@app.itter.sh{RESET}\r\n"
+                f"  > {BOLD}ssh {self._reg_username_candidate}@app.itter.sh{RESET}\r\n" # Placeholder URL
                 f"\r\n"
-                f"or {BOLD}ssh{RESET} {FG_BRIGHT_BLACK}-i /path/to/your/private_key{RESET} {BOLD}{self._reg_username_candidate}@app.itter.sh{RESET}"
+                f"or {BOLD}ssh{RESET} {FG_BRIGHT_BLACK}-i /path/to/your/private_key{RESET} {BOLD}{self._reg_username_candidate}@app.itter.sh{RESET}" # Placeholder URL
                 f"\r\n"
                 f"Have fun & see you on the other side!\r\n"
                 f"\r\n"
@@ -436,11 +436,15 @@ class ItterShell(asyncssh.SSHServerSession):
     def _show_help(self):
         help_text = (
             f"\r\nitter.sh Commands:\r\n"
-            f"  {BOLD}e{RESET}et {FG_BRIGHT_BLACK}<text>{RESET}                     - Post an eet (max 180 chars).\r\n"
+            f"  {BOLD}e{RESET}et {FG_BRIGHT_BLACK}<text>{RESET}                     - Post an eet (max {config.EET_MAX_LENGTH} chars).\r\n"
             f"  {BOLD}w{RESET}atch {FG_BRIGHT_BLACK}[mine|all|#chan|@user]{RESET}   - Live timeline view (Default: all).\r\n"
             f"  {BOLD}t{RESET}ime{BOLD}l{RESET}ine {FG_BRIGHT_BLACK}[mine|all|#chan|@user] [<page>]{RESET} - Show eets (Default: all, 1).\r\n"
-            f"  [{BOLD}f{RESET}ollow|{BOLD}u{RESET}n{BOLD}f{RESET}ollow] {FG_BRIGHT_BLACK}@<user>{RESET}      - Follow a user (or stop following).\r\n"
-            f"  [{BOLD}i{RESET}gnore|{BOLD}u{RESET}n{BOLD}i{RESET}gnore] {FG_BRIGHT_BLACK}@<user>{RESET}      - Ignore a user (or stop ignoring).\r\n"
+            f"  {BOLD}f{RESET}ollow {FG_BRIGHT_BLACK}@<user>{RESET}                  - Follow a user.\r\n"
+            f"  {BOLD}f{RESET}ollow {FG_BRIGHT_BLACK}--list{RESET}                    - List your follows and followers.\r\n"
+            f"  {BOLD}u{RESET}n{BOLD}f{RESET}ollow {FG_BRIGHT_BLACK}@<user>{RESET}                - Unfollow a user.\r\n"
+            f"  {BOLD}i{RESET}gnore {FG_BRIGHT_BLACK}@<user>{RESET}                  - Ignore a user.\r\n"
+            f"  {BOLD}i{RESET}gnore {FG_BRIGHT_BLACK}--list{RESET}                    - List users you ignore.\r\n"
+            f"  {BOLD}u{RESET}n{BOLD}i{RESET}gnore {FG_BRIGHT_BLACK}@<user>{RESET}                - Unignore a user.\r\n"
             f"  {BOLD}p{RESET}rofile {FG_BRIGHT_BLACK}[@<user>]{RESET}              - View user profile (yours or another's).\r\n"
             f"  {BOLD}p{RESET}rofile {BOLD}e{RESET}dit {FG_BRIGHT_BLACK}-name <Name> -email <Email>{RESET} - Edit your profile.\r\n"
             f"  {BOLD}h{RESET}elp                           - Show this help message.\r\n"
@@ -562,6 +566,60 @@ class ItterShell(asyncssh.SSHServerSession):
         if self._chan:
             self._chan.write("\033[2J\033[H")
 
+    async def _display_follow_lists(self):
+        if not self.username: return
+
+        try:
+            following_list = await db.db_get_user_following(self.username)
+            followers_list = await db.db_get_user_followers(self.username)
+        except Exception as e:
+            self._write_to_channel(f"Error fetching follow lists: {e}")
+            return
+
+        output_lines = []
+        output_lines.append(f"\r\n{BOLD}--- You are following ({len(following_list)} users) ---{RESET}")
+        if not following_list:
+            output_lines.append(f"  Not following anyone yet. Use `{BOLD}follow @user{RESET}`.")
+        else:
+            for user_data in following_list:
+                display_name_part = f" ({user_data['display_name']})" if user_data.get('display_name') else ""
+                time_part = f" - since {utils.time_ago(user_data.get('created_at'))}"
+                output_lines.append(f"  {FG_CYAN}@{user_data['username']}{RESET}{display_name_part}{time_part}")
+
+        output_lines.append(f"\r\n{BOLD}--- Follows you ({len(followers_list)} users) ---{RESET}")
+        if not followers_list:
+            output_lines.append("  No followers yet. Be more eet-eresting!")
+        else:
+            for user_data in followers_list:
+                display_name_part = f" ({user_data['display_name']})" if user_data.get('display_name') else ""
+                time_part = f" - since {utils.time_ago(user_data.get('created_at'))}"
+                output_lines.append(f"  {FG_CYAN}@{user_data['username']}{RESET}{display_name_part}{time_part}")
+        
+        output_lines.append("\r\n") # Extra newline for spacing before prompt
+        self._write_to_channel("\r\n".join(output_lines))
+
+    async def _display_ignore_list(self):
+        if not self.username: return
+
+        try:
+            ignoring_list = await db.db_get_user_ignoring(self.username)
+        except Exception as e:
+            self._write_to_channel(f"Error fetching ignore list: {e}")
+            return
+
+        output_lines = []
+        output_lines.append(f"\r\n{BOLD}--- You are ignoring ({len(ignoring_list)} users) ---{RESET}")
+        if not ignoring_list:
+            output_lines.append(f"  Not ignoring anyone. What a saint! Use `{BOLD}ignore @user{RESET}` if needed.")
+        else:
+            for user_data in ignoring_list:
+                display_name_part = f" ({user_data['display_name']})" if user_data.get('display_name') else ""
+                time_part = f" - since {utils.time_ago(user_data.get('created_at'))}"
+                output_lines.append(f"  {FG_MAGENTA}@{user_data['username']}{RESET}{display_name_part}{time_part}")
+        
+        output_lines.append("\r\n") # Extra newline for spacing before prompt
+        self._write_to_channel("\r\n".join(output_lines))
+
     async def _handle_command_line(self, line: str):
         if not self.username and not self._is_registration_flow:
             self._write_to_channel("ERROR: Critical error: No user context.")
@@ -642,14 +700,17 @@ class ItterShell(asyncssh.SSHServerSession):
                         page=self._current_timeline_page
                     )
             elif cmd == "follow" or cmd == "f":
-                target_user = (
-                    user_refs[0] if user_refs else raw_text.strip().lstrip("@")
-                )
-                if not target_user:
-                    self._write_to_channel("Usage: follow @<username>")
+                if raw_text.strip().lower() == "--list":
+                    await self._display_follow_lists()
                 else:
-                    await db.db_follow_user(self.username, target_user)
-                    self._write_to_channel(f"Following @{target_user}. You will now see their posts on your 'mine' page.")
+                    target_user = (
+                        user_refs[0] if user_refs else raw_text.strip().lstrip("@")
+                    )
+                    if not target_user:
+                        self._write_to_channel("Usage: follow @<username> OR follow --list")
+                    else:
+                        await db.db_follow_user(self.username, target_user)
+                        self._write_to_channel(f"Following @{target_user}. You will now see their posts on your 'mine' page.")
             elif cmd == "unfollow" or cmd == "uf":
                 target_user = (
                     user_refs[0] if user_refs else raw_text.strip().lstrip("@")
@@ -660,18 +721,21 @@ class ItterShell(asyncssh.SSHServerSession):
                     await db.db_unfollow_user(self.username, target_user)
                     self._write_to_channel(f"Unfollowed @{target_user}. They won't show up on your 'mine' page anymore.")
             elif cmd == "ignore" or cmd == "i":
-                target_user_to_ignore = (
-                    user_refs[0] if user_refs else raw_text.strip().lstrip("@")
-                )
-                if not target_user_to_ignore:
-                    self._write_to_channel("Usage: ignore @<username>")
-                elif target_user_to_ignore == self.username:
-                    self._write_to_channel("You cannot ignore yourself. (That's what my psychologist said)")
+                if raw_text.strip().lower() == "--list":
+                    await self._display_ignore_list()
                 else:
-                    await db.db_ignore_user(self.username, target_user_to_ignore)
-                    self._write_to_channel(
-                        f"Okay, @{target_user_to_ignore} will now be ignored. Their posts won't appear in your timelines. Phew."
+                    target_user_to_ignore = (
+                        user_refs[0] if user_refs else raw_text.strip().lstrip("@")
                     )
+                    if not target_user_to_ignore:
+                        self._write_to_channel("Usage: ignore @<username> OR ignore --list")
+                    elif target_user_to_ignore == self.username:
+                        self._write_to_channel("You cannot ignore yourself. (That's what my psychologist said)")
+                    else:
+                        await db.db_ignore_user(self.username, target_user_to_ignore)
+                        self._write_to_channel(
+                            f"Okay, @{target_user_to_ignore} will now be ignored. Their posts won't appear in your timelines. Phew."
+                        )
             elif cmd == "unignore" or cmd == "ui":
                 target_user_to_unignore = (
                     user_refs[0] if user_refs else raw_text.strip().lstrip("@")

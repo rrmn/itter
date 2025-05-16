@@ -351,6 +351,89 @@ async def db_get_ignored_user_ids(username: str) -> List[str]:
         return []
 
 
+# --- RPC-based list functions ---
+async def db_get_user_following(current_username: str) -> List[Dict[str, Any]]:
+    """Gets a list of users the current_username is following."""
+    if not supabase_client:
+        raise RuntimeError("Database not initialized")
+    debug_log(f"DB: db_get_user_following for '{current_username}'")
+    user = await db_get_user_by_username(current_username)
+    if not user:
+        debug_log(
+            f"DB: User '{current_username}' not found for db_get_user_following. Returning empty list."
+        )
+        return []
+    user_uuid = user["id"]
+
+    try:
+        resp = await asyncio.to_thread(
+            supabase_client.rpc(
+                "get_user_following", {"input_user_id": user_uuid}
+            ).execute
+        )
+        return resp.data if resp.data else []
+    except Exception as e:
+        debug_log(f"[DB ERROR] db_get_user_following for {current_username}: {e}")
+        if ITTER_DEBUG_MODE:
+            debug_log(traceback.format_exc())
+        return []
+
+
+async def db_get_user_followers(current_username: str) -> List[Dict[str, Any]]:
+    """Gets a list of users following the current_username."""
+    if not supabase_client:
+        raise RuntimeError("Database not initialized")
+    debug_log(f"DB: db_get_user_followers for '{current_username}'")
+    user = await db_get_user_by_username(current_username)
+    if not user:
+        debug_log(
+            f"DB: User '{current_username}' not found for db_get_user_followers. Returning empty list."
+        )
+        return []
+    user_uuid = user["id"]
+
+    try:
+        resp = await asyncio.to_thread(
+            supabase_client.rpc(
+                "get_user_followers", {"input_user_id": user_uuid}
+            ).execute
+        )
+        return resp.data if resp.data else []
+    except Exception as e:
+        debug_log(f"[DB ERROR] db_get_user_followers for {current_username}: {e}")
+        if ITTER_DEBUG_MODE:
+            debug_log(traceback.format_exc())
+        return []
+
+
+async def db_get_user_ignoring(current_username: str) -> List[Dict[str, Any]]:
+    """Gets a list of users the current_username is ignoring."""
+    if not supabase_client:
+        raise RuntimeError("Database not initialized")
+    debug_log(f"DB: db_get_user_ignoring for '{current_username}'")
+    user = await db_get_user_by_username(current_username)
+    if not user:
+        debug_log(
+            f"DB: User '{current_username}' not found for db_get_user_ignoring. Returning empty list."
+        )
+        return []
+    user_uuid = user["id"]
+
+    try:
+        resp = await asyncio.to_thread(
+            supabase_client.rpc(
+                "get_user_ignoring", {"input_user_id": user_uuid}
+            ).execute
+        )
+        return resp.data if resp.data else []
+    except Exception as e:
+        debug_log(f"[DB ERROR] db_get_user_ignoring for {current_username}: {e}")
+        if ITTER_DEBUG_MODE:
+            debug_log(traceback.format_exc())
+        return []
+
+
+# --- Post Operations ---
 async def db_post_eet(
     username: str,
     content: str,
