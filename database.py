@@ -247,6 +247,86 @@ async def db_unfollow_user(
         raise e
 
 
+async def db_is_following_channel(username: str, channel_tag: str) -> bool:
+    if not supabase_client:
+        raise RuntimeError("Database not initialized")
+    channel_tag_lower = channel_tag.lower()
+    debug_log(f"DB: is_following_channel('{username}', '#{channel_tag_lower}')")
+    user = await db_get_user_by_username(username)
+    if not user:
+        return False
+    try:
+        resp = await asyncio.to_thread(
+            supabase_client.table("user_channel_follows")
+            .select("user_id", count="exact")
+            .eq("user_id", user["id"])
+            .eq("channel_tag", channel_tag_lower)
+            .execute
+        )
+        return (
+            resp.count > 0
+            if hasattr(resp, "count") and resp.count is not None
+            else bool(resp.data)
+        )
+    except Exception as e:
+        debug_log(f"[DB ERROR] is_following_channel: {e}")
+        return False
+
+
+async def db_follow_channel(current_username: str, channel_tag: str) -> None:
+    if not supabase_client:
+        raise RuntimeError("Database not initialized")
+    channel_tag_lower = channel_tag.lower()
+    debug_log(f"DB: follow_channel('{current_username}', '#{channel_tag_lower}')")
+    user = await db_get_user_by_username(current_username)
+
+    if not user:
+        raise ValueError(f"User '{current_username}' not found.")
+    if not channel_tag_lower:  # Should be caught by command parser, but good to have
+        raise ValueError("Channel tag cannot be empty.")
+    if await db_is_following_channel(current_username, channel_tag_lower):
+        raise ValueError(f"You are already following channel #{channel_tag_lower}.")
+
+    try:
+        await asyncio.to_thread(
+            supabase_client.table("user_channel_follows")
+            .insert({"user_id": user["id"], "channel_tag": channel_tag_lower})
+            .execute
+        )
+    except Exception as e:
+        debug_log(f"[DB ERROR] db_follow_channel: {e}")
+        if "violates unique constraint" in str(e) or "user_channel_follows_pkey" in str(
+            e
+        ):  # adapt to actual constraint name
+            raise ValueError(f"You are already following channel #{channel_tag_lower}.")
+        raise e
+
+
+async def db_unfollow_channel(current_username: str, channel_tag: str) -> None:
+    if not supabase_client:
+        raise RuntimeError("Database not initialized")
+    channel_tag_lower = channel_tag.lower()
+    debug_log(f"DB: unfollow_channel('{current_username}', '#{channel_tag_lower}')")
+    user = await db_get_user_by_username(current_username)
+
+    if not user:
+        raise ValueError(f"User '{current_username}' not found.")
+    if not await db_is_following_channel(current_username, channel_tag_lower):
+        raise ValueError(f"You are not following channel #{channel_tag_lower} anyway.")
+
+    try:
+        await asyncio.to_thread(
+            supabase_client.table("user_channel_follows")
+            .delete()
+            .match({"user_id": user["id"], "channel_tag": channel_tag_lower})
+            .execute
+        )
+    except Exception as e:
+        debug_log(f"[DB ERROR] db_unfollow_channel: {e}")
+        raise e
+
+
+# --- Ignore Operations ---
 async def db_is_ignoring(ignorer_username: str, ignored_username: str) -> bool:
     if not supabase_client:
         raise RuntimeError("Database not initialized")
@@ -433,6 +513,37 @@ async def db_get_user_ignoring(current_username: str) -> List[Dict[str, Any]]:
         return []
 
 
+async def db_get_user_following_channels(current_username: str) -> List[Dict[str, Any]]:
+    """Gets a list of channels the current_username is following."""
+    if not supabase_client:
+        raise RuntimeError("Database not initialized")
+    debug_log(f"DB: db_get_user_following_channels for '{current_username}'")
+    user = await db_get_user_by_username(current_username)
+    if not user:
+        debug_log(
+            f"DB: User '{current_username}' not found for db_get_user_following_channels. Returning empty list."
+        )
+        return []
+    user_uuid = user["id"]
+
+    try:
+        # This RPC needs to be created in Supabase:
+        # SQL: SELECT lower(channel_tag) as channel_tag, created_at FROM user_channel_follows WHERE user_id = input_user_id ORDER BY created_at DESC;
+        resp = await asyncio.to_thread(
+            supabase_client.rpc(
+                "get_user_following_channels", {"input_user_id": user_uuid}
+            ).execute
+        )
+        return resp.data if resp.data else []
+    except Exception as e:
+        debug_log(
+            f"[DB ERROR] db_get_user_following_channels for {current_username}: {e}"
+        )
+        if ITTER_DEBUG_MODE:
+            debug_log(traceback.format_exc())
+        return []
+
+
 # --- Post Operations ---
 async def db_post_eet(
     username: str,
@@ -529,7 +640,9 @@ async def db_get_filtered_timeline_posts(
             )
             return []
         rpc_name = "get_channel_timeline"
-        rpc_params["p_channel_tag"] = filter_value
+        rpc_params["p_channel_tag"] = (
+            filter_value.lower()
+        )
     elif filter_type == "user":
         if not filter_value or not isinstance(filter_value, str):
             debug_log(

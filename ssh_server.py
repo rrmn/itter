@@ -439,12 +439,10 @@ class ItterShell(asyncssh.SSHServerSession):
             f"  {BOLD}e{RESET}et {FG_BRIGHT_BLACK}<text>{RESET}                     - Post an eet (max {config.EET_MAX_LENGTH} chars).\r\n"
             f"  {BOLD}w{RESET}atch {FG_BRIGHT_BLACK}[mine|all|#chan|@user]{RESET}   - Live timeline view (Default: all).\r\n"
             f"  {BOLD}t{RESET}ime{BOLD}l{RESET}ine {FG_BRIGHT_BLACK}[mine|all|#chan|@user] [<page>]{RESET} - Show eets (Default: all, 1).\r\n"
-            f"  {BOLD}f{RESET}ollow {FG_BRIGHT_BLACK}@<user>{RESET}                  - Follow a user.\r\n"
-            f"  {BOLD}f{RESET}ollow {FG_BRIGHT_BLACK}--list{RESET}                    - List your follows and followers.\r\n"
-            f"  {BOLD}u{RESET}n{BOLD}f{RESET}ollow {FG_BRIGHT_BLACK}@<user>{RESET}                - Unfollow a user.\r\n"
-            f"  {BOLD}i{RESET}gnore {FG_BRIGHT_BLACK}@<user>{RESET}                  - Ignore a user.\r\n"
-            f"  {BOLD}i{RESET}gnore {FG_BRIGHT_BLACK}--list{RESET}                    - List users you ignore.\r\n"
-            f"  {BOLD}u{RESET}n{BOLD}i{RESET}gnore {FG_BRIGHT_BLACK}@<user>{RESET}                - Unignore a user.\r\n"
+            f"  {BOLD}f{RESET}ollow {FG_BRIGHT_BLACK}[#chan|@user] --list{RESET}    - Follow a user or channel, list follows.\r\n"
+            f"  {BOLD}u{RESET}n{BOLD}f{RESET}ollow {FG_BRIGHT_BLACK}[#chan|@user]{RESET}         - Unfollow a user or channel.\r\n"
+            f"  {BOLD}i{RESET}gnore {FG_BRIGHT_BLACK}@<user> --list{RESET}          - Ignore a user, list ignores.\r\n"
+            f"  {BOLD}u{RESET}n{BOLD}i{RESET}gnore {FG_BRIGHT_BLACK}@<user>{RESET}               - Unignore a user.\r\n"
             f"  {BOLD}p{RESET}rofile {FG_BRIGHT_BLACK}[@<user>]{RESET}              - View user profile (yours or another's).\r\n"
             f"  {BOLD}p{RESET}rofile {BOLD}e{RESET}dit {FG_BRIGHT_BLACK}-name <Name> -email <Email>{RESET} - Edit your profile.\r\n"
             f"  {BOLD}h{RESET}elp                           - Show this help message.\r\n"
@@ -572,6 +570,7 @@ class ItterShell(asyncssh.SSHServerSession):
         try:
             following_list = await db.db_get_user_following(self.username)
             followers_list = await db.db_get_user_followers(self.username)
+            following_channels_list = await db.db_get_user_following_channels(self.username)
         except Exception as e:
             self._write_to_channel(f"Error fetching follow lists: {e}")
             return
@@ -585,6 +584,15 @@ class ItterShell(asyncssh.SSHServerSession):
                 display_name_part = f" ({user_data['display_name']})" if user_data.get('display_name') else ""
                 time_part = f" - since {utils.time_ago(user_data.get('created_at'))}"
                 output_lines.append(f"  {FG_CYAN}@{user_data['username']}{RESET}{display_name_part}{time_part}")
+
+        output_lines.append(f"\r\n{BOLD}--- You are following ({len(following_channels_list)} channels) ---{RESET}")
+        if not following_channels_list:
+            output_lines.append(f"  Not following any channels yet. Use `{BOLD}follow #channel{RESET}`.")
+        else:
+            for channel_data in following_channels_list:
+                time_part = f" - since {utils.time_ago(channel_data.get('created_at'))}"
+                output_lines.append(f"  {FG_MAGENTA}#{channel_data['channel_tag']}{RESET}{time_part}")
+
 
         output_lines.append(f"\r\n{BOLD}--- Follows you ({len(followers_list)} users) ---{RESET}")
         if not followers_list:
@@ -626,9 +634,13 @@ class ItterShell(asyncssh.SSHServerSession):
             self.close()
             return
 
-        cmd, raw_text, hashtags, user_refs = utils.parse_input_line(line)
+        cmd, raw_text_full, hashtags_in_full_line, user_refs_in_full_line = utils.parse_input_line(line)
+        # For follow/unfollow, hashtags_in_full_line and user_refs_in_full_line are not reliable
+        # for the target itself if the target is the *only* argument.
+        # We will parse the target from raw_text_full.
+        
         utils.debug_log(
-            f"Parsed command: cmd='{cmd}', raw_text='{raw_text}', hashtags={hashtags}, user_refs={user_refs}"
+            f"Parsed command: cmd='{cmd}', raw_text_full='{raw_text_full}', hashtags_in_full_line={hashtags_in_full_line}, user_refs_in_full_line={user_refs_in_full_line}"
         )
 
         if not cmd:
@@ -637,10 +649,11 @@ class ItterShell(asyncssh.SSHServerSession):
 
         try:
             # Add command to history
-            self._command_history.add((cmd + " " + raw_text.strip()).strip())
+            self._command_history.add((cmd + " " + raw_text_full.strip()).strip())
 
             if cmd == "eet" or cmd == "e":
-                content = raw_text.strip()
+                # For eet, use hashtags_in_full_line and user_refs_in_full_line as they are extracted from the eet content
+                content = raw_text_full.strip()
                 if not content:
                     self._write_to_channel("Usage: eet <text>")
                 elif len(content) > config.EET_MAX_LENGTH:
@@ -649,7 +662,7 @@ class ItterShell(asyncssh.SSHServerSession):
                     )
                 else:
                     await db.db_post_eet(
-                        self.username, content, hashtags, user_refs, self._client_ip
+                        self.username, content, hashtags_in_full_line, user_refs_in_full_line, self._client_ip
                     )
                     self._write_to_channel("Eet posted!")
                     if self._is_watching_timeline:
@@ -661,73 +674,103 @@ class ItterShell(asyncssh.SSHServerSession):
                         )
             elif cmd == "timeline" or cmd == "tl" or cmd == "watch" or cmd == "w":
                 self._current_timeline_page = 1
-                target_specifier_text = raw_text
-                parts = raw_text.split()
+                target_specifier_text = raw_text_full # Use raw_text_full here for parsing page and target
+                parts = raw_text_full.split()
+                page_from_input = None
                 if parts and parts[-1].isdigit():
-                    self._current_timeline_page = int(parts[-1])
+                    page_from_input = int(parts[-1])
                     target_specifier_text = " ".join(parts[:-1])
+                
+                # Determine target based on specifier text (which may now exclude page number)
+                # User refs and hashtags from full line might be misleading if page number was present
+                # Re-evaluate target type based on target_specifier_text
+                temp_cmd, temp_raw, temp_hashtags, temp_user_refs = utils.parse_input_line(f"dummy_cmd {target_specifier_text}")
 
-                if user_refs:
+
+                if temp_user_refs: # e.g. @user or @user 1
                     self._current_target_filter = {
                         "type": "user",
-                        "value": user_refs[0],
+                        "value": temp_user_refs[0],
                     }
-                elif target_specifier_text.strip().startswith("#"):
+                elif target_specifier_text.strip().startswith("#"): # e.g. #channel or #channel 1
                     channel_name = target_specifier_text.strip()[1:]
-                    if re.match(r"^[a-zA-Z0-9][a-zA-Z0-9-]*$", channel_name):
+                    if re.match(r"^[a-zA-Z0-9][a-zA-Z0-9-]*$", channel_name): # Basic validation
                         self._current_target_filter = {
                             "type": "channel",
                             "value": channel_name,
                         }
                     else:
-                        self._write_to_channel(f"Invalid channel: '{channel_name}'.")
+                        self._write_to_channel(f"Invalid channel format: '{channel_name}'. Defaulting to 'all'.")
                         self._current_target_filter = {"type": "all", "value": None}
-                else:
+                else: # e.g. all, mine, or all 1, mine 1, or just empty for 'all'
                     self._current_target_filter = utils.parse_target_filter(
-                        target_specifier_text
+                        target_specifier_text 
                     )
+                
+                if page_from_input is not None:
+                    self._current_timeline_page = page_from_input
+
 
                 utils.debug_log(
-                    f"Timeline/Watch target set to: {self._current_target_filter}"
+                    f"Timeline/Watch target set to: {self._current_target_filter}, page: {self._current_timeline_page}"
                 )
                 if cmd == "watch" or cmd == "w":
                     self._is_watching_timeline = True
-                    await self._start_live_timeline_view()
-                    return
+                    await self._start_live_timeline_view() # Will use current page (likely 1 for watch start)
+                    return 
                 else:
                     self._is_watching_timeline = False
                     await self._render_and_display_timeline(
                         page=self._current_timeline_page
                     )
             elif cmd == "follow" or cmd == "f":
-                if raw_text.strip().lower() == "--list":
+                target_text = raw_text_full.strip()
+                if target_text.lower() == "--list":
                     await self._display_follow_lists()
-                else:
-                    target_user = (
-                        user_refs[0] if user_refs else raw_text.strip().lstrip("@")
-                    )
-                    if not target_user:
-                        self._write_to_channel("Usage: follow @<username> OR follow --list")
+                elif target_text.startswith("#"):
+                    channel_tag_to_follow = target_text[1:]
+                    if not channel_tag_to_follow or not re.match(r"^[a-zA-Z0-9][a-zA-Z0-9-]*[a-zA-Z0-9]$|^[a-zA-Z0-9]$", channel_tag_to_follow):
+                        self._write_to_channel(f"Invalid channel name format: '#{channel_tag_to_follow}'. Must be alphanumeric with hyphens, not starting/ending with hyphen.")
                     else:
-                        await db.db_follow_user(self.username, target_user)
-                        self._write_to_channel(f"Following @{target_user}. You will now see their posts on your 'mine' page.")
-            elif cmd == "unfollow" or cmd == "uf":
-                target_user = (
-                    user_refs[0] if user_refs else raw_text.strip().lstrip("@")
-                )
-                if not target_user:
-                    self._write_to_channel("Usage: unfollow @<username>")
+                        await db.db_follow_channel(self.username, channel_tag_to_follow)
+                        self._write_to_channel(f"Now following channel {FG_MAGENTA}#{channel_tag_to_follow.lower()}{RESET}. Posts from this channel will appear in your 'mine' feed.")
+                elif target_text.startswith("@"):
+                    target_user_to_follow = target_text[1:]
+                    if not target_user_to_follow:
+                        self._write_to_channel("Invalid username format: '@'.")
+                    else:
+                        await db.db_follow_user(self.username, target_user_to_follow)
+                        self._write_to_channel(f"Following {FG_CYAN}@{target_user_to_follow}{RESET}. You will now see their posts on your 'mine' page.")
                 else:
-                    await db.db_unfollow_user(self.username, target_user)
-                    self._write_to_channel(f"Unfollowed @{target_user}. They won't show up on your 'mine' page anymore.")
+                    self._write_to_channel(f"Usage: {BOLD}follow @<user>{RESET} OR {BOLD}follow #<channel>{RESET} OR {BOLD}follow --list{RESET}")
+
+            elif cmd == "unfollow" or cmd == "uf":
+                target_text = raw_text_full.strip()
+                if target_text.startswith("#"):
+                    channel_tag_to_unfollow = target_text[1:]
+                    if not channel_tag_to_unfollow or not re.match(r"^[a-zA-Z0-9][a-zA-Z0-9-]*[a-zA-Z0-9]$|^[a-zA-Z0-9]$", channel_tag_to_unfollow):
+                         self._write_to_channel(f"Invalid channel name format: '#{channel_tag_to_unfollow}'.")
+                    else:
+                        await db.db_unfollow_channel(self.username, channel_tag_to_unfollow)
+                        self._write_to_channel(f"No longer following channel {FG_MAGENTA}#{channel_tag_to_unfollow.lower()}{RESET}.")
+                elif target_text.startswith("@"):
+                    target_user_to_unfollow = target_text[1:]
+                    if not target_user_to_unfollow:
+                        self._write_to_channel("Invalid username format: '@'.")
+                    else:
+                        await db.db_unfollow_user(self.username, target_user_to_unfollow)
+                        self._write_to_channel(f"Unfollowed {FG_CYAN}@{target_user_to_unfollow}{RESET}. They won't show up on your 'mine' page anymore.")
+                else:
+                    self._write_to_channel(f"Usage: {BOLD}unfollow @<user>{RESET} OR {BOLD}unfollow #<channel>{RESET}")
             elif cmd == "ignore" or cmd == "i":
-                if raw_text.strip().lower() == "--list":
+                if raw_text_full.strip().lower() == "--list":
                     await self._display_ignore_list()
                 else:
+                    # Ignores are user-only for now. user_refs_in_full_line is fine here.
                     target_user_to_ignore = (
-                        user_refs[0] if user_refs else raw_text.strip().lstrip("@")
+                        user_refs_in_full_line[0] if user_refs_in_full_line else raw_text_full.strip().lstrip("@")
                     )
-                    if not target_user_to_ignore:
+                    if not target_user_to_ignore or raw_text_full.strip().startswith("#"):
                         self._write_to_channel("Usage: ignore @<username> OR ignore --list")
                     elif target_user_to_ignore == self.username:
                         self._write_to_channel("You cannot ignore yourself. (That's what my psychologist said)")
@@ -737,10 +780,11 @@ class ItterShell(asyncssh.SSHServerSession):
                             f"Okay, @{target_user_to_ignore} will now be ignored. Their posts won't appear in your timelines. Phew."
                         )
             elif cmd == "unignore" or cmd == "ui":
+                # Unignores are user-only. user_refs_in_full_line is fine.
                 target_user_to_unignore = (
-                    user_refs[0] if user_refs else raw_text.strip().lstrip("@")
+                    user_refs_in_full_line[0] if user_refs_in_full_line else raw_text_full.strip().lstrip("@")
                 )
-                if not target_user_to_unignore:
+                if not target_user_to_unignore or raw_text_full.strip().startswith("#"):
                     self._write_to_channel("Usage: unignore @<username>")
                 else:
                     await db.db_unignore_user(self.username, target_user_to_unignore)
@@ -748,17 +792,17 @@ class ItterShell(asyncssh.SSHServerSession):
                         f"Okay, @{target_user_to_unignore} is forgiven and will no longer be ignored. You'll see their posts again."
                     )
             elif cmd == "profile" or cmd == "p":
-                await self._handle_profile_command(raw_text, user_refs)
+                await self._handle_profile_command(raw_text_full, user_refs_in_full_line)
             elif cmd == "help" or cmd == "h":
                 self._display_welcome_banner()
                 self._show_help()
             elif cmd == "clear" or cmd == "c":
                 self._clear_screen()
                 if self._is_watching_timeline:
-                    await self._render_and_display_timeline(page=1, is_live_update=True)
+                    await self._render_and_display_timeline(page=self._current_timeline_page, is_live_update=True)
                 else:
                     self._prompt()
-                return
+                return 
             elif cmd == "exit" or cmd == "x":
                 await self._handle_exit_command()
                 return
@@ -815,6 +859,10 @@ class ItterShell(asyncssh.SSHServerSession):
                     raw_text.strip().lstrip("@") if raw_text.strip() else self.username
                 )
             )
+            if profile_username.startswith("#"): # Cannot view profile of a channel
+                self._write_to_channel(f"Cannot view profile for a channel: {profile_username}")
+                return
+
             try:
                 stats = await db.db_get_profile_stats(profile_username)
                 profile_output = (
@@ -855,13 +903,24 @@ class ItterShell(asyncssh.SSHServerSession):
 
     async def _start_live_timeline_view(self):
         self._clear_screen()
+        target_type_display = self._current_target_filter['type']
+        target_value_display = self._current_target_filter['value']
+        if target_type_display == "channel" and target_value_display:
+            target_display = f"#{target_value_display}"
+        elif target_type_display == "user" and target_value_display:
+            target_display = f"@{target_value_display}"
+        else:
+            target_display = target_value_display or 'all'
+        
         self._write_to_channel(
-            f"Entering live view for {self._current_target_filter['type']}='{self._current_target_filter['value'] or 'all'}'."
+            f"Entering live view for {target_type_display}='{target_display}'."
         )
         self._write_to_channel("(Type 'exit' or Ctrl+C to stop)\n")
+        # Start watch on page 1
+        self._current_timeline_page = 1 
         await self._render_and_display_timeline(
-            page=1, is_live_update=True
-        )  # Initial render clears screen
+            page=self._current_timeline_page, is_live_update=True
+        )
         if (
             self._timeline_auto_refresh_task
             and not self._timeline_auto_refresh_task.done()
@@ -877,15 +936,17 @@ class ItterShell(asyncssh.SSHServerSession):
                 await asyncio.sleep(config.WATCH_REFRESH_INTERVAL_SECONDS)
                 if self._is_watching_timeline:
                     utils.debug_log("Live timeline auto-refresh triggered.")
+                    # Live refresh always fetches page 1 of the current filter
                     await self._render_and_display_timeline(page=1, is_live_update=True)
         except asyncio.CancelledError:
             utils.debug_log("Timeline refresh loop cancelled.")
         except Exception as e:
             utils.debug_log(f"Error in timeline refresh loop: {e}")
             if self._is_watching_timeline and self._chan:
-                self._clear_screen()
+                self._clear_screen() # Clear screen before showing error and prompt
                 self._write_to_channel(f"ERROR: Live timeline update error: {e}\r\n")
                 self._redraw_prompt_and_buffer()
+
 
     async def _render_and_display_timeline(
         self, page: int, is_live_update: bool = False
@@ -893,29 +954,31 @@ class ItterShell(asyncssh.SSHServerSession):
         if not self.username:
             return
         try:
+            # page is passed to db_get_filtered_timeline_posts
+            self._current_timeline_page = page # Update current page
             eets = await db.db_get_filtered_timeline_posts(
-                self.username, self._current_target_filter, page=page
+                self.username, self._current_target_filter, page=self._current_timeline_page
             )
         except Exception as e:
-            if self._is_watching_timeline and self._chan:
+            error_message = f"Timeline Error: {e}"
+            if is_live_update and self._chan:
                 self._clear_screen()
-                self._write_to_channel(f"Timeline Error: {e}\r\n")
-                self._redraw_prompt_and_buffer()
+                self._write_to_channel(error_message + "\r\n")
+                self._redraw_prompt_and_buffer() # Redraw prompt and any buffered input
             elif self._chan:
-                self._write_to_channel(f"Timeline Error: {e}")
+                self._write_to_channel(error_message) # For non-live, just print error
             return
 
         formatted_output = await asyncio.to_thread(
-            self._format_timeline_output, eets, page
+            self._format_timeline_output, eets, self._current_timeline_page # Pass current page
         )
 
+        self._clear_screen() # Clear screen for both live and non-live updates
+        self._write_to_channel(formatted_output, newline=True)
+        
         if is_live_update:
-            self._clear_screen()
-            self._write_to_channel(formatted_output, newline=True)
-            self._redraw_prompt_and_buffer()
-        else:
-            self._clear_screen()
-            self._write_to_channel(formatted_output, newline=True)
+            self._redraw_prompt_and_buffer() # Redraw prompt and buffer for live updates
+        # For non-live (manual timeline command), the prompt will be added by _handle_command_line
 
 
     def _format_timeline_output(self, eets: List[Dict[str, Any]], page: int) -> str:
@@ -924,13 +987,28 @@ class ItterShell(asyncssh.SSHServerSession):
         sep_w = 3
         eet_w = max(10, self._term_width - time_w - user_w - (sep_w * 2))
 
-        output_lines = [f"{'Time':<{time_w}} | {'User':<{user_w}} | {'Eet':<{eet_w}}"]
+        target_type_display = self._current_target_filter['type']
+        target_value_display = self._current_target_filter['value']
+        
+        if target_type_display == "channel" and target_value_display:
+            timeline_title = f"#{target_value_display}"
+        elif target_type_display == "user" and target_value_display:
+            timeline_title = f"@{target_value_display}"
+        elif target_type_display == "mine":
+            timeline_title = "Your 'Mine' Feed"
+        else: # all
+            timeline_title = "All Eets"
+
+        header_line = f"--- {timeline_title} (Page {page}) ---"
+        
+        output_lines = [f"{BOLD}{header_line}{RESET}"]
+        output_lines.append(f"{'Time':<{time_w}} | {'User':<{user_w}} | {'Eet':<{eet_w}}")
         output_lines.append(
             "-" * min(self._term_width, time_w + user_w + eet_w + (sep_w * 2))
         )
 
         if not eets:
-            output_lines.append(" No eets found." if page == 1 else " End of timeline.")
+            output_lines.append(" No eets found." if page == 1 else f" End of timeline for {timeline_title}.")
         else:
             for eet in eets:
                 t = utils.time_ago(eet.get("created_at"))
@@ -947,27 +1025,41 @@ class ItterShell(asyncssh.SSHServerSession):
 
                 first_line_content = cont_lines_plain[0] if cont_lines_plain else ""
                 output_lines.append(
-                    f"{t:<{time_w}} | {u:<{user_w}} | {utils.format_eet_content(first_line_content):<{eet_w}}"
+                    f"{t:<{time_w}} | {FG_CYAN}{u:<{user_w}}{RESET} | {utils.format_eet_content(first_line_content)}" 
+                    # Removed fixed width for eet content to allow ANSI codes to work properly
                 )
 
                 indent = " " * (time_w + sep_w + user_w + sep_w)
                 for i in range(1, len(cont_lines_plain)):
                     output_lines.append(
-                        f"{indent}{utils.format_eet_content(cont_lines_plain[i]):<{eet_w}}"
+                        f"{indent}{utils.format_eet_content(cont_lines_plain[i])}"
                     )
 
         footer_lines = []
         if self._is_watching_timeline:
-            status = f"Live updating... Target: {self._current_target_filter['type']}='{self._current_target_filter['value'] or 'all'}'. (exit to stop)"
+            status = f"Live updating... (exit to stop)"
             footer_lines.append(status)
-        else:
+        else: # Static timeline view
             footer = ""
+            # Determine the base command for pagination hints
+            base_command_parts = ["timeline"]
+            if self._current_target_filter['type'] == 'user' and self._current_target_filter['value']:
+                base_command_parts.append(f"@{self._current_target_filter['value']}")
+            elif self._current_target_filter['type'] == 'channel' and self._current_target_filter['value']:
+                 base_command_parts.append(f"#{self._current_target_filter['value']}")
+            elif self._current_target_filter['type'] != 'all': # e.g. 'mine'
+                 base_command_parts.append(self._current_target_filter['type'])
+            
+            base_command_str = " ".join(base_command_parts)
+
+
             if not eets and page > 1:
-                footer = f"Page {page}. No more."
+                footer = f"No more eets on page {page}."
             elif len(eets) >= config.DEFAULT_TIMELINE_PAGE_SIZE:
-                footer = f"Page {page}. `timeline ... {page + 1}` for more."
-            elif eets:
-                footer = f"Page {page}. End of results."
+                footer = f"Type `{base_command_str} {page + 1}` for more."
+            elif eets: # Some eets, but less than page size
+                footer = f"End of results on page {page}."
+            
             if footer:
                 footer_lines.append(footer)
 
@@ -980,33 +1072,25 @@ class ItterShell(asyncssh.SSHServerSession):
         if not self._is_watching_timeline or not self.username:
             return
         utils.debug_log(f"RT check for {self.username}: Post {post_record.get('id')}")
-        post_author_id = post_record.get("user_id")
-        post_tags = post_record.get("tags", []) or []
-        target_type = self._current_target_filter.get("type")
-        target_value = self._current_target_filter.get("value")
-        refresh = False
-        if target_type == "all":
-            refresh = True
-        elif target_type == "mine":
-            details = await db.db_get_user_by_id(post_author_id)
-            if details:
-                current_user_obj = await db.db_get_user_by_username(self.username)
-                if current_user_obj and post_author_id == current_user_obj["id"]:
-                    refresh = True
-                elif details and await db.db_is_following(
-                    self.username, details["username"]
-                ):
-                    refresh = True
-        elif target_type == "user":
-            details = await db.db_get_user_by_id(post_author_id)
-            if details and details["username"] == target_value:
-                refresh = True
-        elif target_type == "channel":
-            if target_value and target_value in [tag.lower() for tag in post_tags]:
-                refresh = True
-        if refresh:
-            utils.debug_log(f"RT relevant for {self.username}, refreshing.")
-            await self._render_and_display_timeline(page=1, is_live_update=True)
+        
+        # In watch mode, we always refresh if _is_watching_timeline is true,
+        # and the underlying RPC (`get_timeline`, `get_all_posts_timeline`, etc.)
+        # is responsible for filtering based on self._current_target_filter.
+        # The RPCs also handle ignored users.
+        
+        # The key is that handle_new_post_realtime is only called if a new post is inserted globally.
+        # The _render_and_display_timeline will then re-fetch based on the current filter.
+        
+        # For "mine" feed, this means the get_timeline RPC must be correctly
+        # filtering by followed users AND followed channels.
+        # For "channel" feed, get_channel_timeline RPC filters by that channel.
+        # For "user" feed, get_user_posts_timeline RPC filters by that user.
+        # For "all" feed, get_all_posts_timeline fetches all relevant posts.
+        
+        # So, if the user is watching, we just refresh their current view.
+        utils.debug_log(f"RT relevant for {self.username} (is watching), refreshing.")
+        await self._render_and_display_timeline(page=1, is_live_update=True) # Refresh to page 1
+
 
     def connection_lost(self, exc: Optional[Exception]) -> None:
         utils.debug_log(
