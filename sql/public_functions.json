@@ -11,13 +11,33 @@
     },
     {
         "function_name": "get_timeline",
+        "arguments": "input_user_id uuid, p_page integer DEFAULT 1, p_page_size integer DEFAULT 10",
+        "return_type": "TABLE(post_id uuid, author_id uuid, eet_content text, eet_tags text[], eet_users_mentioned text[], eet_created_at timestamp with time zone, author_username text, author_display_name text)"
+    },
+    {
+        "function_name": "get_timeline",
         "arguments": "user_id uuid",
         "return_type": "TABLE(content text, username text, created_at timestamp with time zone)"
     },
     {
-        "function_name": "get_timeline",
-        "arguments": "input_user_id uuid, p_page integer DEFAULT 1, p_page_size integer DEFAULT 10",
-        "return_type": "TABLE(post_id uuid, author_id uuid, eet_content text, eet_tags text[], eet_users_mentioned text[], eet_created_at timestamp with time zone, author_username text, author_display_name text)"
+        "function_name": "get_user_followers",
+        "arguments": "input_user_id uuid",
+        "return_type": "TABLE(username text, display_name text, created_at timestamp with time zone)"
+    },
+    {
+        "function_name": "get_user_following",
+        "arguments": "input_user_id uuid",
+        "return_type": "TABLE(username text, display_name text, created_at timestamp with time zone)"
+    },
+    {
+        "function_name": "get_user_following_channels",
+        "arguments": "input_user_id uuid",
+        "return_type": "TABLE(channel_tag text, created_at timestamp with time zone)"
+    },
+    {
+        "function_name": "get_user_ignoring",
+        "arguments": "input_user_id uuid",
+        "return_type": "TABLE(username text, display_name text, created_at timestamp with time zone)"
     },
     {
         "function_name": "get_user_posts_timeline",
