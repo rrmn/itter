@@ -10,7 +10,7 @@ from typing import Optional, Dict, Any, List, Tuple
 import database as db
 import utils
 import config
-import command_history
+from command_history import CommandHistory 
 
 from utils import BOLD, FG_BRIGHT_BLACK, RESET, FG_CYAN, FG_MAGENTA
 
@@ -296,7 +296,7 @@ class ItterShell(asyncssh.SSHServerSession):
         self._term_width = 80
         self._term_height = 24
         self._input_buffer = ""
-        self._command_history = command_history.CommandHistory()
+        self._command_history = CommandHistory()
         self._active_sessions: Optional[Dict[str, "ItterShell"]] = (
             None  # Use forward reference
         )
