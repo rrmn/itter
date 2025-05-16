@@ -84,7 +84,7 @@ async def db_create_user(username: str, public_key: str) -> None:
 
 
 async def db_update_profile(
-    username: str, new_display_name: Optional[str], new_email: Optional[str]
+    username: str, new_display_name: Optional[str], new_email: Optional[str], reset: Optional[bool] = False
 ) -> None:
     if not supabase_client:
         raise RuntimeError("Database not initialized")
@@ -94,14 +94,18 @@ async def db_update_profile(
     user = await db_get_user_by_username(username)
     if not user:
         raise ValueError("User not found for profile update.")
-
+    
     update_data = {}
     if new_display_name is not None:
         update_data["display_name"] = new_display_name
     if new_email is not None:
         update_data["email"] = new_email
+    # Reset display name and email if reset is True
+    if reset:
+        update_data["display_name"] = None
+        update_data["email"] = None
 
-    if not update_data:
+    if not update_data and not reset:
         raise ValueError("Nothing to update. Provide a new name and/or email.")
 
     try:

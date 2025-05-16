@@ -3,6 +3,7 @@ import re
 import hashlib
 from datetime import datetime, timezone
 from typing import Optional, Tuple, List, Dict
+from wcwidth import wcswidth, wcwidth as get_char_width
 from config import ITTER_DEBUG_MODE, IP_HASH_SALT
 
 # --- ANSI Escape Codes ---
@@ -31,6 +32,10 @@ FG_BRIGHT_BLUE = "\033[94m"
 FG_BRIGHT_MAGENTA = "\033[95m"
 FG_BRIGHT_CYAN = "\033[96m"
 FG_BRIGHT_WHITE = "\033[97m"
+
+# Regex to strip ANSI escape codes
+ANSI_ESCAPE_RE = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+
 
 # --- Logging ---
 def debug_log(msg: str) -> None:
@@ -93,8 +98,9 @@ def parse_target_filter(raw_text: str) -> Dict[str, Optional[str]]:
 
 
 # --- Eet Content Formatting ---
-def format_eet_content(content: str) -> str:
-    """Applies ANSI color codes to all hashtags and mentions in eet content."""
+def format_eet_content(content: str, current_username: Optional[str] = None, current_user_color: str = FG_BRIGHT_YELLOW) -> str:
+    """Applies ANSI color codes to all hashtags and mentions in eet content.
+    Highlights the current user's mentions in a specific color."""
 
     # Define the combined regex pattern string directly inside the function.
     # This pattern will find either a hashtag or a username.
@@ -109,13 +115,13 @@ def format_eet_content(content: str) -> str:
         if match_obj.group(1) == "#":  # It's a hashtag
             hashtag_char = match_obj.group(1)  # The '#'
             hashtag_text = match_obj.group(2)  # The tag content
-            # FG_MAGENTA and RESET are from your global definitions
             return f"{FG_MAGENTA}{hashtag_char}{hashtag_text}{RESET}"
         elif match_obj.group(3) == "@":  # It's a username
             mention_char = match_obj.group(3)  # The '@'
             mention_text = match_obj.group(4)  # The username
-            # FG_CYAN and RESET are from your global definitions
-            return f"{FG_CYAN}{mention_char}{mention_text}{RESET}"
+            if current_username and mention_text.lower() == current_username.lower():
+                return f"{current_user_color}{mention_char}{mention_text}{RESET}"
+            return f"{FG_CYAN}{mention_char}{mention_text}{RESET}" # Other users
         # This fallback should ideally not be reached if the pattern is correct
         # and only matches what we intend for hashtags or usernames.
         return match_obj.group(0)
@@ -142,3 +148,42 @@ def hash_ip(ip_address: str) -> Optional[str]:
     except Exception as e:
         debug_log(f"Error hashing IP address {ip_address}: {e}")
         return None
+
+
+# --- String Utils ---
+def strip_ansi(text: str) -> str:
+    """Removes ANSI escape codes from a string."""
+    return ANSI_ESCAPE_RE.sub('', text)
+
+def truncate_str_with_wcwidth(text: str, max_visual_width: int, placeholder: str = "...") -> str:
+    """Truncates a string to a maximum visual width, accounting for wide characters."""
+    if not text:
+        return ""
+        
+    text_visual_width = wcswidth(text)
+    if text_visual_width <= max_visual_width:
+        return text
+
+    placeholder_visual_width = wcswidth(placeholder)
+    
+    if max_visual_width < placeholder_visual_width:
+        # Not enough space for placeholder, just truncate as much as possible
+        current_width = 0
+        for i, char in enumerate(text):
+            char_width = get_char_width(char)
+            if char_width == -1: char_width = 1 # Treat error as width 1
+            if current_width + char_width > max_visual_width:
+                return text[:i]
+            current_width += char_width
+        return text # Should not happen if text_visual_width > max_visual_width
+
+    target_text_width = max_visual_width - placeholder_visual_width
+    current_width = 0
+    end_idx = 0
+    for i, char in enumerate(text):
+        char_width = get_char_width(char)
+        if char_width == -1: char_width = 1 # Treat error as width 1
+        if current_width + char_width > target_text_width: break
+        current_width += char_width
+        end_idx = i + 1
+    return text[:end_idx] + placeholder

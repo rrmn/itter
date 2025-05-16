@@ -12,7 +12,7 @@ import utils
 import config
 from command_history import CommandHistory 
 
-from utils import BOLD, FG_BRIGHT_BLACK, RESET, FG_CYAN, FG_MAGENTA
+from utils import BOLD, FG_BRIGHT_BLACK, RESET, FG_CYAN, FG_MAGENTA, FG_BRIGHT_YELLOW
 
 # Global reference - will be set by main.py
 # Use forward reference for type hint to avoid circular import if needed later
@@ -302,6 +302,9 @@ class ItterShell(asyncssh.SSHServerSession):
         )
         self._client_ip: Optional[str] = None
 
+        self._timeline_page_size = config.DEFAULT_TIMELINE_PAGE_SIZE
+        self._last_timeline_eets_count: Optional[int] = None # For PgUp/PgDn context
+
         try:
             with open(config.BANNER_FILE, "r") as f:
                 self._banner_text = f.read()
@@ -348,11 +351,17 @@ class ItterShell(asyncssh.SSHServerSession):
                 self._write_to_channel(self._input_buffer, newline=False)
 
     def _redraw_input_line(self):
+        # Move cursor to the beginning of the line
+        self._write_to_channel("\r", newline=False)
+        # Get prompt text to calculate length accurately
         prompt_text = self._get_prompt_text()
+        # Calculate total length of prompt + current buffer
+        total_len_to_clear = len(prompt_text) + len(self._input_buffer)
+        # Overwrite existing input with spaces to clear the line visually
+        self._write_to_channel(" " * total_len_to_clear, newline=False)
+        # Move cursor back to the beginning of the line again
         self._write_to_channel("\r", newline=False)
-        # Overwrite existing input with spaces to clear the line
-        self._write_to_channel(" " * (len(prompt_text) + len(self._input_buffer)), newline=False)
-        self._write_to_channel("\r", newline=False)
+
 
     def connection_made(self, chan: asyncssh.SSHServerChannel) -> None:
         utils.debug_log(
@@ -444,7 +453,8 @@ class ItterShell(asyncssh.SSHServerSession):
             f"  {BOLD}i{RESET}gnore {FG_BRIGHT_BLACK}@<user> --list{RESET}          - Ignore a user, list ignores.\r\n"
             f"  {BOLD}u{RESET}n{BOLD}i{RESET}gnore {FG_BRIGHT_BLACK}@<user>{RESET}               - Unignore a user.\r\n"
             f"  {BOLD}p{RESET}rofile {FG_BRIGHT_BLACK}[@<user>]{RESET}              - View user profile (yours or another's).\r\n"
-            f"  {BOLD}p{RESET}rofile {BOLD}e{RESET}dit {FG_BRIGHT_BLACK}-name <Name> -email <Email>{RESET} - Edit your profile.\r\n"
+            f"  {BOLD}p{RESET}rofile {BOLD}e{RESET}dit {FG_BRIGHT_BLACK}-name <Name> -email <Email> --reset{RESET} - Edit profile (or reset it).\r\n"
+            f"  {BOLD}s{RESET}ettings                       - View or change settings.\r\n"
             f"  {BOLD}h{RESET}elp                           - Show this help message.\r\n"
             f"  {BOLD}c{RESET}lear                          - Clear the screen.\r\n"
             f"  e{BOLD}x{RESET}it                           - Exit watch mode or itter.sh.\r\n"
@@ -483,25 +493,62 @@ class ItterShell(asyncssh.SSHServerSession):
 
         # Handle escape sequences
         if data.startswith("\x1b"):
-            if data == "\x1b[A":
+            if data == "\x1b[A": # Up arrow
                 self._redraw_input_line()
                 command = self._command_history.scroll_up()
+                self._input_buffer = command # Update buffer before writing
                 self._prompt()
-                self._write_to_channel(command, newline=False)
-                self._input_buffer = command
+                self._write_to_channel(self._input_buffer, newline=False)
                 return
-            elif data == "\x1b[B":
+            elif data == "\x1b[B": # Down arrow
                 self._redraw_input_line()
                 command = self._command_history.scroll_down()
+                self._input_buffer = command # Update buffer before writing
                 self._prompt()
-                self._write_to_channel(command, newline=False)
-                self._input_buffer = command
+                self._write_to_channel(self._input_buffer, newline=False)
                 return
+            # Page Up: \x1b[5~ , Page Down: \x1b[6~
+            elif data == "\x1b[5~":  # Page Up
+                if self._is_watching_timeline or self._last_timeline_eets_count is not None:
+                    utils.debug_log("Page Up received")
+                    if self._current_timeline_page > 1:
+                        self._current_timeline_page -= 1
+                        is_live = self._is_watching_timeline
+                        async def _pg_up_scroll():
+                            await self._render_and_display_timeline(page=self._current_timeline_page, is_live_update=is_live)
+                            if not is_live: self._prompt() # Manually prompt after static render if not live
+                        asyncio.create_task(_pg_up_scroll())
+                    else:
+                        self._write_to_channel("\r\nAlready at the first page.", newline=True)
+                        self._redraw_prompt_and_buffer() # Redraw prompt if at first page
+                    return 
+            elif data == "\x1b[6~":  # Page Down
+                if self._is_watching_timeline or self._last_timeline_eets_count is not None:
+                    utils.debug_log("Page Down received")
+                    # Only allow page down if we previously got a full page or are watching
+                    can_page_down = self._is_watching_timeline or \
+                                    (self._last_timeline_eets_count is not None and 
+                                     self._last_timeline_eets_count >= self._timeline_page_size)
+                    if can_page_down:
+                        self._current_timeline_page += 1
+                        is_live = self._is_watching_timeline
+                        async def _pg_down_scroll():
+                            await self._render_and_display_timeline(page=self._current_timeline_page, is_live_update=is_live)
+                            if not is_live: self._prompt() # Manually prompt after static render if not live
+                        asyncio.create_task(_pg_down_scroll())
+                    else:
+                        self._write_to_channel("\r\nAlready at the last page or no more items.", newline=True)
+                        self._redraw_prompt_and_buffer() # Redraw prompt if at last page
+                    return
+            # Other escape sequences (like Home, End, Delete) can be added here if needed.
+            # Example: \x1b[H (Home), \x1b[F (End) or \x1b[4~ (End), \x1b[3~ (Delete)
+            # For now, just log them.
             else:
-                utils.debug_log(f"unknown escape sequence: {data!r}")
-                return
+                utils.debug_log(f"Unhandled escape sequence: {data!r}")
+                # Potentially echo back or ignore. For now, ignore.
+                return # Important to return to prevent processing as normal chars
 
-        # Handle normal character input
+        # Handle normal character input (no longer inside the if data.startswith("\x1b") block)
         for char in data:
             if char in ("\r", "\n"):
                 self._write_to_channel()
@@ -512,48 +559,37 @@ class ItterShell(asyncssh.SSHServerSession):
                     asyncio.create_task(self._handle_command_line(line_to_process))
                 else:
                     self._prompt()
-            elif char == "\x7f":
+            elif char == "\x7f": # Backspace
                 if self._input_buffer:
                     self._input_buffer = self._input_buffer[:-1]
                     self._write_to_channel("\b \b", newline=False)
-            elif char == "\x03":
+            elif char == "\x03": # Ctrl+C
                 self._write_to_channel("^C\r\n", newline=False)
                 self.close()
-            elif char == "\x04":
+            elif char == "\x04": # Ctrl+D
                 self._write_to_channel("^D\r\n", newline=False)
                 self.close()
-            elif char == "\x15":  # Ctrl+U
+            elif char == "\x15":  # Ctrl+U (kill line)
                 if self._input_buffer:
-                    current_prompt_len = len(self._get_prompt_text())
-                    old_input_buffer_len = len(self._input_buffer)
-                    self._write_to_channel("\r", newline=False)
-                    self._write_to_channel(
-                        " " * (current_prompt_len + old_input_buffer_len), newline=False
-                    )
-                    self._write_to_channel("\r", newline=False)
+                    self._redraw_input_line() # Clears the line
                     self._input_buffer = ""
-                    self._prompt()
-            elif char == "\x17":  # Ctrl+W
+                    self._prompt() # Redraw prompt
+            elif char == "\x17":  # Ctrl+W (kill word)
                 if self._input_buffer:
-                    old_input_buffer_len = len(self._input_buffer)
-
-                    i = len(self._input_buffer) - 1
-                    while i >= 0 and self._input_buffer[i].isspace():
+                    old_buffer = self._input_buffer
+                    self._redraw_input_line() # Clears current line visually
+                    
+                    # Find the start of the last word
+                    i = len(old_buffer) - 1
+                    while i >= 0 and old_buffer[i].isspace(): # Skip trailing spaces
                         i -= 1
                     j = i
-                    while j >= 0 and not self._input_buffer[j].isspace():
+                    while j >= 0 and not old_buffer[j].isspace(): # Go to start of word
                         j -= 1
-
-                    self._input_buffer = self._input_buffer[: j + 1]
-
-                    current_prompt_len = len(self._get_prompt_text())
-                    self._write_to_channel("\r", newline=False)
-                    self._write_to_channel(
-                        " " * (current_prompt_len + old_input_buffer_len), newline=False
-                    )
-                    self._write_to_channel("\r", newline=False)
-                    self._prompt()
-                    self._write_to_channel(self._input_buffer, newline=False)
+                    
+                    self._input_buffer = old_buffer[:j + 1] # Keep part before the word
+                    self._prompt() # Redraw prompt
+                    self._write_to_channel(self._input_buffer, newline=False) # Redraw new buffer
             elif char.isprintable():
                 self._input_buffer += char
                 self._write_to_channel(char, newline=False)
@@ -635,9 +671,6 @@ class ItterShell(asyncssh.SSHServerSession):
             return
 
         cmd, raw_text_full, hashtags_in_full_line, user_refs_in_full_line = utils.parse_input_line(line)
-        # For follow/unfollow, hashtags_in_full_line and user_refs_in_full_line are not reliable
-        # for the target itself if the target is the *only* argument.
-        # We will parse the target from raw_text_full.
         
         utils.debug_log(
             f"Parsed command: cmd='{cmd}', raw_text_full='{raw_text_full}', hashtags_in_full_line={hashtags_in_full_line}, user_refs_in_full_line={user_refs_in_full_line}"
@@ -650,9 +683,9 @@ class ItterShell(asyncssh.SSHServerSession):
         try:
             # Add command to history
             self._command_history.add((cmd + " " + raw_text_full.strip()).strip())
+            self._last_timeline_eets_count = None # Reset timeline context for non-timeline commands
 
             if cmd == "eet" or cmd == "e":
-                # For eet, use hashtags_in_full_line and user_refs_in_full_line as they are extracted from the eet content
                 content = raw_text_full.strip()
                 if not content:
                     self._write_to_channel("Usage: eet <text>")
@@ -673,43 +706,43 @@ class ItterShell(asyncssh.SSHServerSession):
                             page=1, is_live_update=True
                         )
             elif cmd == "timeline" or cmd == "tl" or cmd == "watch" or cmd == "w":
-                self._current_timeline_page = 1
-                target_specifier_text = raw_text_full # Use raw_text_full here for parsing page and target
+                self._current_timeline_page = 1 # Default to page 1 for new timeline/watch command
+                target_specifier_text = raw_text_full 
                 parts = raw_text_full.split()
                 page_from_input = None
                 if parts and parts[-1].isdigit():
                     page_from_input = int(parts[-1])
-                    target_specifier_text = " ".join(parts[:-1])
+                    target_specifier_text = " ".join(parts[:-1]).strip()
                 
-                # Determine target based on specifier text (which may now exclude page number)
-                # User refs and hashtags from full line might be misleading if page number was present
                 # Re-evaluate target type based on target_specifier_text
-                temp_cmd, temp_raw, temp_hashtags, temp_user_refs = utils.parse_input_line(f"dummy_cmd {target_specifier_text}")
-
-
-                if temp_user_refs: # e.g. @user or @user 1
-                    self._current_target_filter = {
-                        "type": "user",
-                        "value": temp_user_refs[0],
-                    }
-                elif target_specifier_text.strip().startswith("#"): # e.g. #channel or #channel 1
-                    channel_name = target_specifier_text.strip()[1:]
-                    if re.match(r"^[a-zA-Z0-9][a-zA-Z0-9-]*$", channel_name): # Basic validation
+                # (which now excludes the page number if it was present)
+                
+                # Quick check for specific target types first
+                if target_specifier_text.startswith("@"):
+                    user_match = re.match(r"^@(\w{3,20})$", target_specifier_text)
+                    if user_match:
                         self._current_target_filter = {
-                            "type": "channel",
-                            "value": channel_name,
+                            "type": "user", "value": user_match.group(1)
                         }
-                    else:
-                        self._write_to_channel(f"Invalid channel format: '{channel_name}'. Defaulting to 'all'.")
+                    else: # Invalid user format after @
+                        self._write_to_channel(f"Invalid user format: '{target_specifier_text}'. Defaulting to 'all'.")
                         self._current_target_filter = {"type": "all", "value": None}
-                else: # e.g. all, mine, or all 1, mine 1, or just empty for 'all'
+                elif target_specifier_text.startswith("#"):
+                    channel_match = re.match(r"^#(\w(?:[\w-]*\w)?)$", target_specifier_text) # More robust channel regex
+                    if channel_match:
+                         self._current_target_filter = {
+                            "type": "channel", "value": channel_match.group(1)
+                        }
+                    else: # Invalid channel format after #
+                        self._write_to_channel(f"Invalid channel format: '{target_specifier_text}'. Defaulting to 'all'.")
+                        self._current_target_filter = {"type": "all", "value": None}
+                else: # Not starting with @ or #, use general parser
                     self._current_target_filter = utils.parse_target_filter(
                         target_specifier_text 
                     )
                 
                 if page_from_input is not None:
                     self._current_timeline_page = page_from_input
-
 
                 utils.debug_log(
                     f"Timeline/Watch target set to: {self._current_target_filter}, page: {self._current_timeline_page}"
@@ -718,7 +751,7 @@ class ItterShell(asyncssh.SSHServerSession):
                     self._is_watching_timeline = True
                     await self._start_live_timeline_view() # Will use current page (likely 1 for watch start)
                     return 
-                else:
+                else: # timeline or tl
                     self._is_watching_timeline = False
                     await self._render_and_display_timeline(
                         page=self._current_timeline_page
@@ -736,8 +769,8 @@ class ItterShell(asyncssh.SSHServerSession):
                         self._write_to_channel(f"Now following channel {FG_MAGENTA}#{channel_tag_to_follow.lower()}{RESET}. Posts from this channel will appear in your 'mine' feed.")
                 elif target_text.startswith("@"):
                     target_user_to_follow = target_text[1:]
-                    if not target_user_to_follow:
-                        self._write_to_channel("Invalid username format: '@'.")
+                    if not target_user_to_follow or not re.match(r"^[a-zA-Z0-9_]{3,20}$", target_user_to_follow):
+                        self._write_to_channel("Invalid username format: '@username' (3-20 alphanumeric/underscore).")
                     else:
                         await db.db_follow_user(self.username, target_user_to_follow)
                         self._write_to_channel(f"Following {FG_CYAN}@{target_user_to_follow}{RESET}. You will now see their posts on your 'mine' page.")
@@ -755,23 +788,21 @@ class ItterShell(asyncssh.SSHServerSession):
                         self._write_to_channel(f"No longer following channel {FG_MAGENTA}#{channel_tag_to_unfollow.lower()}{RESET}.")
                 elif target_text.startswith("@"):
                     target_user_to_unfollow = target_text[1:]
-                    if not target_user_to_unfollow:
-                        self._write_to_channel("Invalid username format: '@'.")
+                    if not target_user_to_unfollow or not re.match(r"^[a-zA-Z0-9_]{3,20}$", target_user_to_unfollow):
+                        self._write_to_channel("Invalid username format: '@username'.")
                     else:
                         await db.db_unfollow_user(self.username, target_user_to_unfollow)
                         self._write_to_channel(f"Unfollowed {FG_CYAN}@{target_user_to_unfollow}{RESET}. They won't show up on your 'mine' page anymore.")
                 else:
                     self._write_to_channel(f"Usage: {BOLD}unfollow @<user>{RESET} OR {BOLD}unfollow #<channel>{RESET}")
             elif cmd == "ignore" or cmd == "i":
-                if raw_text_full.strip().lower() == "--list":
+                target_text_ignore = raw_text_full.strip()
+                if target_text_ignore.lower() == "--list":
                     await self._display_ignore_list()
-                else:
-                    # Ignores are user-only for now. user_refs_in_full_line is fine here.
-                    target_user_to_ignore = (
-                        user_refs_in_full_line[0] if user_refs_in_full_line else raw_text_full.strip().lstrip("@")
-                    )
-                    if not target_user_to_ignore or raw_text_full.strip().startswith("#"):
-                        self._write_to_channel("Usage: ignore @<username> OR ignore --list")
+                elif target_text_ignore.startswith("@"):
+                    target_user_to_ignore = target_text_ignore[1:]
+                    if not target_user_to_ignore or not re.match(r"^[a-zA-Z0-9_]{3,20}$", target_user_to_ignore):
+                        self._write_to_channel("Invalid username format: '@username'.")
                     elif target_user_to_ignore == self.username:
                         self._write_to_channel("You cannot ignore yourself. (That's what my psychologist said)")
                     else:
@@ -779,20 +810,44 @@ class ItterShell(asyncssh.SSHServerSession):
                         self._write_to_channel(
                             f"Okay, @{target_user_to_ignore} will now be ignored. Their posts won't appear in your timelines. Phew."
                         )
-            elif cmd == "unignore" or cmd == "ui":
-                # Unignores are user-only. user_refs_in_full_line is fine.
-                target_user_to_unignore = (
-                    user_refs_in_full_line[0] if user_refs_in_full_line else raw_text_full.strip().lstrip("@")
-                )
-                if not target_user_to_unignore or raw_text_full.strip().startswith("#"):
-                    self._write_to_channel("Usage: unignore @<username>")
                 else:
-                    await db.db_unignore_user(self.username, target_user_to_unignore)
-                    self._write_to_channel(
-                        f"Okay, @{target_user_to_unignore} is forgiven and will no longer be ignored. You'll see their posts again."
-                    )
+                    self._write_to_channel(f"Usage: {BOLD}ignore @<user>{RESET} OR {BOLD}ignore --list{RESET}")
+
+            elif cmd == "unignore" or cmd == "ui":
+                target_text_unignore = raw_text_full.strip()
+                if target_text_unignore.startswith("@"):
+                    target_user_to_unignore = target_text_unignore[1:]
+                    if not target_user_to_unignore or not re.match(r"^[a-zA-Z0-9_]{3,20}$", target_user_to_unignore):
+                        self._write_to_channel("Invalid username format: '@username'.")
+                    else:
+                        await db.db_unignore_user(self.username, target_user_to_unignore)
+                        self._write_to_channel(
+                            f"Okay, @{target_user_to_unignore} is forgiven and will no longer be ignored. You'll see their posts again."
+                        )
+                else:
+                    self._write_to_channel(f"Usage: {BOLD}unignore @<user>{RESET}")
             elif cmd == "profile" or cmd == "p":
                 await self._handle_profile_command(raw_text_full, user_refs_in_full_line)
+            elif cmd == "settings" or cmd == "s":
+                parts = raw_text_full.lower().split()
+                if not parts: # Just "settings"
+                    self._write_to_channel(
+                        f"\r\nCurrent settings:\r\n"
+                        f"  Eets per page: {BOLD}{self._timeline_page_size}{RESET}\r\n"
+                        f"  {FG_BRIGHT_BLACK}Usage:{RESET} settings pagesize <{config.MIN_TIMELINE_PAGE_SIZE}-{config.MAX_TIMELINE_PAGE_SIZE}>"
+                    )
+                elif len(parts) == 2 and parts[0] == "pagesize":
+                    try:
+                        new_size = int(parts[1])
+                        if config.MIN_TIMELINE_PAGE_SIZE <= new_size <= config.MAX_TIMELINE_PAGE_SIZE:
+                            self._timeline_page_size = new_size
+                            self._write_to_channel(f"All right! You will now see {new_size} eets per page.")
+                        else:
+                            self._write_to_channel(f"Error: Page size must be between {config.MIN_TIMELINE_PAGE_SIZE} and {config.MAX_TIMELINE_PAGE_SIZE}.")
+                    except ValueError:
+                        self._write_to_channel("That... was not a number.")
+                else:
+                    self._write_to_channel(f"{FG_BRIGHT_BLACK}Usage:{RESET} settings pagesize <{config.MIN_TIMELINE_PAGE_SIZE}-{config.MAX_TIMELINE_PAGE_SIZE}>")
             elif cmd == "help" or cmd == "h":
                 self._display_welcome_banner()
                 self._show_help()
@@ -800,7 +855,7 @@ class ItterShell(asyncssh.SSHServerSession):
                 self._clear_screen()
                 if self._is_watching_timeline:
                     await self._render_and_display_timeline(page=self._current_timeline_page, is_live_update=True)
-                else:
+                else: # If not watching, after clear, just show prompt
                     self._prompt()
                 return 
             elif cmd == "exit" or cmd == "x":
@@ -826,6 +881,7 @@ class ItterShell(asyncssh.SSHServerSession):
         if args and (args[0].lower() == "edit" or args[0].lower() == "e"):
             new_display_name = None
             new_email = None
+            reset_user = False
             try:
                 idx = args.index("-name")
                 new_display_name = (
@@ -844,12 +900,20 @@ class ItterShell(asyncssh.SSHServerSession):
                 )
             except (ValueError, IndexError):
                 pass
-            if new_display_name is None and new_email is None:
+            try:
+                if args.index("--reset") != -1:
+                    reset_user = True
+                    new_display_name = None
+                    new_email = None
+            except (ValueError, IndexError):
+                pass
+            if new_display_name is None and new_email is None and reset_user is False:
                 self._write_to_channel(
-                    "Usage: profile edit -name <Name> -email <Email>"
+                    f"{FG_BRIGHT_BLACK}Usage:{RESET} profile edit -name <Name> -email <Email>  (use --reset to delete all fields)"
                 )
             else:
-                await db.db_update_profile(self.username, new_display_name, new_email)
+                await db.db_update_profile(
+                    self.username, new_display_name, new_email, reset_user)
                 self._write_to_channel("Profile updated.")
         else:
             profile_username = (
@@ -860,7 +924,7 @@ class ItterShell(asyncssh.SSHServerSession):
                 )
             )
             if profile_username.startswith("#"): # Cannot view profile of a channel
-                self._write_to_channel(f"Cannot view profile for a channel: {profile_username}")
+                self._write_to_channel(f"That's a channel, not a profile: {profile_username}")
                 return
 
             try:
@@ -885,7 +949,7 @@ class ItterShell(asyncssh.SSHServerSession):
                 self._write_to_channel(f"Error: {ve}")
             except Exception as e:
                 utils.debug_log(f"Err profile {profile_username}: {e}")
-                self._write_to_channel(f"Error fetching profile.")
+                self._write_to_channel(f"Error fetching profile for @{profile_username}.")
 
     async def _handle_exit_command(self):
         if self._is_watching_timeline:
@@ -910,12 +974,12 @@ class ItterShell(asyncssh.SSHServerSession):
         elif target_type_display == "user" and target_value_display:
             target_display = f"@{target_value_display}"
         else:
-            target_display = target_value_display or 'all'
-        
+            target_display = target_type_display # 'all' or 'mine'
+
         self._write_to_channel(
-            f"Entering live view for {target_type_display}='{target_display}'."
+            f"Entering live view for {target_display}."
         )
-        self._write_to_channel("(Type 'exit' or Ctrl+C to stop)\n")
+        self._write_to_channel("(Type 'exit' or Ctrl+C to stop; PgUp/PgDn to scroll recent history)\n")
         # Start watch on page 1
         self._current_timeline_page = 1 
         await self._render_and_display_timeline(
@@ -954,38 +1018,42 @@ class ItterShell(asyncssh.SSHServerSession):
         if not self.username:
             return
         try:
-            # page is passed to db_get_filtered_timeline_posts
             self._current_timeline_page = page # Update current page
             eets = await db.db_get_filtered_timeline_posts(
-                self.username, self._current_target_filter, page=self._current_timeline_page
+                self.username, self._current_target_filter, 
+                page=self._current_timeline_page, 
+                page_size=self._timeline_page_size 
             )
         except Exception as e:
             error_message = f"Timeline Error: {e}"
             if is_live_update and self._chan:
                 self._clear_screen()
                 self._write_to_channel(error_message + "\r\n")
-                self._redraw_prompt_and_buffer() # Redraw prompt and any buffered input
+                self._redraw_prompt_and_buffer() 
             elif self._chan:
-                self._write_to_channel(error_message) # For non-live, just print error
+                self._write_to_channel(error_message) 
             return
+        
+        self._last_timeline_eets_count = len(eets) # Update for PgUp/PgDn context
 
         formatted_output = await asyncio.to_thread(
-            self._format_timeline_output, eets, self._current_timeline_page # Pass current page
+            self._format_timeline_output, eets, self._current_timeline_page 
         )
 
-        self._clear_screen() # Clear screen for both live and non-live updates
+        self._clear_screen() 
         self._write_to_channel(formatted_output, newline=True)
         
         if is_live_update:
-            self._redraw_prompt_and_buffer() # Redraw prompt and buffer for live updates
+            self._redraw_prompt_and_buffer() 
         # For non-live (manual timeline command), the prompt will be added by _handle_command_line
-
+        # *unless* this was called from a PgUp/PgDn handler, in which case prompt is handled there.
 
     def _format_timeline_output(self, eets: List[Dict[str, Any]], page: int) -> str:
         time_w = 12
-        user_w = 25
+        user_w = 20 # Max visual width for user column
         sep_w = 3
-        eet_w = max(10, self._term_width - time_w - user_w - (sep_w * 2))
+        # Calculate eet_w based on visual width used by other columns
+        eet_w = max(10, self._term_width - time_w - user_w - (sep_w * 2) - 2) # -2 for final margins
 
         target_type_display = self._current_target_filter['type']
         target_value_display = self._current_target_filter['value']
@@ -996,53 +1064,81 @@ class ItterShell(asyncssh.SSHServerSession):
             timeline_title = f"@{target_value_display}"
         elif target_type_display == "mine":
             timeline_title = "Your 'Mine' Feed"
-        else: # all
+        else:
             timeline_title = "All Eets"
 
-        header_line = f"--- {timeline_title} (Page {page}) ---"
+        header_line = f"--- {timeline_title} (Page {page}, {self._timeline_page_size} items) ---"
         
         output_lines = [f"{BOLD}{header_line}{RESET}"]
-        output_lines.append(f"{'Time':<{time_w}} | {'User':<{user_w}} | {'Eet':<{eet_w}}")
+        output_lines.append(f"{'Time':<{time_w}}   {'User':<{user_w}}   {'Eet':<{eet_w}}")
         output_lines.append(
-            "-" * min(self._term_width, time_w + user_w + eet_w + (sep_w * 2))
+            f"{FG_BRIGHT_BLACK}" + "-" * min(self._term_width, time_w + user_w + eet_w + (sep_w * 2)) + f"{RESET}"
         )
 
         if not eets:
             output_lines.append(" No eets found." if page == 1 else f" End of timeline for {timeline_title}.")
         else:
             for eet in eets:
-                t = utils.time_ago(eet.get("created_at"))
-                u_raw = f"@{eet.get('username', 'ghost')}"
-                disp = eet.get("display_name")
-                u = f"{disp} ({u_raw})" if disp else u_raw
-                if len(u) > user_w:
-                    u = u[: user_w - 3] + "..."
+                time_str = utils.time_ago(eet.get("created_at"))
+                
+                # User column formatting
+                author_username = eet.get('username', 'ghost')
+                author_display_name = eet.get('display_name')
+                user_display_str_raw = f"@{author_username}"
+                
+                user_final_display_name = f"{author_display_name} ({user_display_str_raw})" if author_display_name else user_display_str_raw
+                
+                # Truncate based on visual width
+                user_final_display_name_truncated = utils.truncate_str_with_wcwidth(user_final_display_name, user_w)
 
-                cont = eet.get("content", "").replace("\r", "").replace("\n", " ")
+                user_column_str_colored = user_final_display_name_truncated
+                if author_username.lower() == self.username.lower(): # Current user's post
+                    user_column_str_colored = f"{utils.FG_BRIGHT_YELLOW}{user_final_display_name_truncated}{utils.RESET}"
+                # No special color for other users in this column. Mentions are handled in content.
 
-                wrapper = textwrap.TextWrapper(width=eet_w, subsequent_indent="  ")
-                cont_lines_plain = wrapper.wrap(text=cont)
+                # Pad the user column string correctly, considering ANSI and wcwidth
+                user_col_visual_width_after_truncate = utils.wcswidth(user_final_display_name_truncated)
+                user_col_padding_spaces = user_w - user_col_visual_width_after_truncate
+                user_col_padded_final = f"{user_column_str_colored}{' ' * max(0, user_col_padding_spaces)}"
 
-                first_line_content = cont_lines_plain[0] if cont_lines_plain else ""
-                output_lines.append(
-                    f"{t:<{time_w}} | {FG_CYAN}{u:<{user_w}}{RESET} | {utils.format_eet_content(first_line_content)}" 
-                    # Removed fixed width for eet content to allow ANSI codes to work properly
-                )
+                # Eet content formatting
+                raw_content = eet.get("content", "").replace("\r", "").replace("\n", " ")
+                
+                # Wrap raw content first using a TextWrapper that is NOT wcwidth aware for wrapping itself
+                # but we use wcwidth for display calculations line by line.
+                # This is a compromise as TextWrapper doesn't handle wcwidth + ANSI.
+                wrapper = textwrap.TextWrapper(width=eet_w, subsequent_indent="  ", 
+                                               break_long_words=True, break_on_hyphens=True,
+                                               replace_whitespace=False, drop_whitespace=True) # Standard textwrap
+                
+                content_lines_raw = wrapper.wrap(text=utils.strip_ansi(raw_content)) # Wrap the plain text
 
-                indent = " " * (time_w + sep_w + user_w + sep_w)
-                for i in range(1, len(cont_lines_plain)):
+                if not content_lines_raw: # Should not happen if raw_content exists
+                    output_lines.append(f"{time_str:<{time_w}} | {user_col_padded_final} | ")
+                else:
+                    # Format the first line (which was already wrapped from plain text)
+                    first_line_formatted = utils.format_eet_content(content_lines_raw[0], self.username, utils.FG_BRIGHT_YELLOW)
                     output_lines.append(
-                        f"{indent}{utils.format_eet_content(cont_lines_plain[i])}"
+                        f"{time_str:<{time_w}} " + " " + f" {user_col_padded_final} " + " " + f" {first_line_formatted}"
                     )
+
+                    # Calculate indent based on visual widths of static parts
+                    indent_visual_width = time_w + sep_w + user_w + sep_w
+                    indent_str = " " * indent_visual_width
+                    for i in range(1, len(content_lines_raw)):
+                        # Format subsequent lines
+                        line_formatted = utils.format_eet_content(content_lines_raw[i], self.username, utils.FG_BRIGHT_YELLOW)
+                        output_lines.append(
+                            f"{indent_str}{line_formatted}"
+                        )
 
         footer_lines = []
         if self._is_watching_timeline:
-            status = f"Live updating... (exit to stop)"
+            status = f"Live updating... {FG_BRIGHT_BLACK}(exit to stop, (Shift +) PgUp/PgDn to scroll){RESET}"
             footer_lines.append(status)
-        else: # Static timeline view
+        else: # Static timeline view (not watching)
             footer = ""
-            # Determine the base command for pagination hints
-            base_command_parts = ["timeline"]
+            base_command_parts = ["timeline"] # or "tl"
             if self._current_target_filter['type'] == 'user' and self._current_target_filter['value']:
                 base_command_parts.append(f"@{self._current_target_filter['value']}")
             elif self._current_target_filter['type'] == 'channel' and self._current_target_filter['value']:
@@ -1052,13 +1148,14 @@ class ItterShell(asyncssh.SSHServerSession):
             
             base_command_str = " ".join(base_command_parts)
 
-
-            if not eets and page > 1:
-                footer = f"No more eets on page {page}."
-            elif len(eets) >= config.DEFAULT_TIMELINE_PAGE_SIZE:
-                footer = f"Type `{base_command_str} {page + 1}` for more."
-            elif eets: # Some eets, but less than page size
+            if not eets and page > 1: # No eets on this page, but it's not the first page
+                footer = f"No more eets on page {page}. Type `{base_command_str} {page - 1}` for previous."
+            elif len(eets) >= self._timeline_page_size: # Full page, more might exist
+                footer = f"Type `{base_command_str} {page + 1}` for more, or `{base_command_str} {page -1}` for previous (if page > 1)."
+            elif eets: # Some eets, but less than page size (i.e., last page of results)
                 footer = f"End of results on page {page}."
+                if page > 1:
+                    footer += f" Type `{base_command_str} {page - 1}` for previous."
             
             if footer:
                 footer_lines.append(footer)
@@ -1087,8 +1184,8 @@ class ItterShell(asyncssh.SSHServerSession):
         # For "user" feed, get_user_posts_timeline RPC filters by that user.
         # For "all" feed, get_all_posts_timeline fetches all relevant posts.
         
-        # So, if the user is watching, we just refresh their current view.
-        utils.debug_log(f"RT relevant for {self.username} (is watching), refreshing.")
+        # So, if the user is watching, we just refresh their current view to page 1.
+        utils.debug_log(f"RT relevant for {self.username} (is watching), refreshing to page 1.")
         await self._render_and_display_timeline(page=1, is_live_update=True) # Refresh to page 1
 
 
@@ -1104,7 +1201,7 @@ class ItterShell(asyncssh.SSHServerSession):
             try:
                 del self._active_sessions[self.username]
             except KeyError:
-                pass
+                pass # Already removed
         if (
             self._timeline_auto_refresh_task
             and not self._timeline_auto_refresh_task.done()
@@ -1130,7 +1227,8 @@ async def start_ssh_server(
             config.SSH_HOST,
             config.SSH_PORT,
             server_host_keys=[config.SSH_HOST_KEY_PATH],
-            line_editor=False,
+            line_editor=False, # We handle line editing
+            # term_type='xterm-256color' # Can suggest a term type to client
         )
         print(f"itter.sh server humming on ssh://{config.SSH_HOST}:{config.SSH_PORT}")
         print("Ctrl+C to stop.")

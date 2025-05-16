@@ -7,6 +7,8 @@ from dotenv import load_dotenv
 BANNER_FILE = "itter_banner.txt"
 EET_MAX_LENGTH = 180
 SSH_HOST_KEY_PATH = "./ssh_host_key"
+MIN_TIMELINE_PAGE_SIZE = 1
+MAX_TIMELINE_PAGE_SIZE = 30
 DEFAULT_TIMELINE_PAGE_SIZE = 10
 WATCH_REFRESH_INTERVAL_SECONDS = 15  # How often watch mode refreshes
 
