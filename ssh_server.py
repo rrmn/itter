@@ -13,6 +13,7 @@ import config
 import command_history
 
 from utils import BOLD, FG_BRIGHT_BLACK, RESET, FG_CYAN, FG_MAGENTA
+from utils import BOLD, FG_BRIGHT_BLACK, RESET, FG_CYAN, FG_MAGENTA
 
 # Global reference - will be set by main.py
 # Use forward reference for type hint to avoid circular import if needed later
@@ -436,6 +437,7 @@ class ItterShell(asyncssh.SSHServerSession):
     def _show_help(self):
         help_text = (
             f"\r\nitter.sh Commands:\r\n"
+            f"  {BOLD}e{RESET}et {FG_BRIGHT_BLACK}<text>{RESET}                     - Post an eet (max {config.EET_MAX_LENGTH} chars).\r\n"
             f"  {BOLD}e{RESET}et {FG_BRIGHT_BLACK}<text>{RESET}                     - Post an eet (max {config.EET_MAX_LENGTH} chars).\r\n"
             f"  {BOLD}w{RESET}atch {FG_BRIGHT_BLACK}[mine|all|#chan|@user]{RESET}   - Live timeline view (Default: all).\r\n"
             f"  {BOLD}t{RESET}ime{BOLD}l{RESET}ine {FG_BRIGHT_BLACK}[mine|all|#chan|@user] [<page>]{RESET} - Show eets (Default: all, 1).\r\n"
