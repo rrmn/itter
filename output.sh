@@ -13,8 +13,9 @@ PROJECT_DIR=$(pwd)
 echo -e "# Project File List with Contents\n" > "$OUTPUT_FILE"
 
 # Find all matching files and count them for progress tracking
-FILES=($(find "$PROJECT_DIR" -type f \( -name "*.py" -o -name "*.html" \) \
+FILES=($(find "$PROJECT_DIR" -type f \( -name "*.py" -o -name "*.html" -o -name "*.json" -o -name "*.txt" \) \
   ! -path "*/node_modules/*" \
+  ! -path "*/project_files*" \
   ! -path "*/.venv/*" \
   ! -path "*/.*" \
   ! -path "*/__pycache__/*"))
