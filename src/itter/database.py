@@ -1,26 +1,19 @@
 import asyncio
+import logging
 import traceback
 from typing import Any
 
 from supabase import Client
 
-from itter.config import DEFAULT_TIMELINE_PAGE_SIZE, EET_MAX_LENGTH, ITTER_DEBUG_MODE
+# from itter.config import DEFAULT_TIMELINE_PAGE_SIZE, EET_MAX_LENGTH, ITTER_DEBUG_MODE
+from itter.context import config, db_client_ctx
 from itter.utils import debug_log, hash_ip
 
-# Placeholder for the client - will be initialized in main.py
-supabase_client: Client | None = None
 
-
-def init_db(client: Client):
-    """Initializes the database module with the Supabase client."""
-    global supabase_client
-    supabase_client = client
-    debug_log("Database module initialized.")
+logger = logging.getLogger(__name__)
 
 
 # --- User Operations ---
-
-
 async def db_get_user_by_username(username: str) -> dict[str, Any] | None:
     if not supabase_client:
         raise RuntimeError("Database not initialized")
@@ -517,7 +510,7 @@ async def db_get_user_ignoring(current_username: str) -> list[dict[str, Any]]:
         return resp.data if resp.data else []
     except Exception as e:
         debug_log(f"[DB ERROR] db_get_user_ignoring for {current_username}: {e}")
-        if ITTER_DEBUG_MODE:
+        if config.itter_debug_mode:
             debug_log(traceback.format_exc())
         return []
 
@@ -548,7 +541,7 @@ async def db_get_user_following_channels(current_username: str) -> list[dict[str
         debug_log(
             f"[DB ERROR] db_get_user_following_channels for {current_username}: {e}"
         )
-        if ITTER_DEBUG_MODE:
+        if config.itter_debug_mode:
             debug_log(traceback.format_exc())
         return []
 
@@ -566,8 +559,8 @@ async def db_post_eet(
     debug_log(
         f"DB: post_eet('{username}') -> tags={tags}, mentions={mentions}, client_ip={client_ip}"
     )
-    if len(content) > EET_MAX_LENGTH:
-        raise ValueError(f"Eet too long (max {EET_MAX_LENGTH} chars).")
+    if len(content) > config.eet_max_length:
+        raise ValueError(f"Eet too long (max {config.eet_max_length} chars).")
 
     user = await db_get_user_by_username(username)
     if not user:
@@ -610,7 +603,7 @@ async def db_get_filtered_timeline_posts(
     current_username: str,
     target_filter: dict[str, Any],
     page: int = 1,
-    page_size: int = DEFAULT_TIMELINE_PAGE_SIZE,
+    page_size: int = config.default_timeline_page_size,
 ) -> list[dict[str, Any]]:
     if not supabase_client:
         raise RuntimeError("Database not initialized")
@@ -689,6 +682,6 @@ async def db_get_filtered_timeline_posts(
         debug_log(
             f"[DB ERROR] Calling RPC {rpc_name} for {current_username} with {target_filter}: {e}"
         )
-        if ITTER_DEBUG_MODE:
+        if config.itter_debug_mode:
             debug_log(traceback.format_exc())
         return []

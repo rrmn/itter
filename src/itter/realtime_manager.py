@@ -1,11 +1,12 @@
 # /realtime_manager.py
 import asyncio
+import logging
 import sys
 from typing import Dict, Any, Optional
 
 # Import from the actual library now that the name conflict is resolved
 from realtime import AsyncRealtimeClient, RealtimeSubscribeStates
-from utils import debug_log
+from itter.utils import debug_log
 # Import the specific type hint for the shell if needed for type checking within this file
 # from ssh_server import ItterShell # <--- Uncomment if you need detailed type checking
 
@@ -14,13 +15,14 @@ rt_client: Optional[AsyncRealtimeClient] = None
 # Placeholder for active sessions - will be passed in (use Any for now to avoid circular import if ItterShell not imported)
 active_sessions_ref: Optional[Dict[str, Any]] = None
 
+logger = logging.getLogger(__name__)
 
-def init_realtime(client: AsyncRealtimeClient, sessions_dict: Dict[str, Any]):
-    """Initializes the realtime module with the client and session reference."""
-    global rt_client, active_sessions_ref
-    rt_client = client
-    active_sessions_ref = sessions_dict
-    debug_log("Realtime manager module initialized.")
+# def init_realtime(client: AsyncRealtimeClient, sessions_dict: Dict[str, Any]):
+#     """Initializes the realtime module with the client and session reference."""
+#     global rt_client, active_sessions_ref
+#     rt_client = client
+#     active_sessions_ref = sessions_dict
+#     logger.debug("Realtime manager module initialized.")
 
 
 async def handle_global_new_post_event(payload: Dict[str, Any]):

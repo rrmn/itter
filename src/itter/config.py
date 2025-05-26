@@ -1,10 +1,4 @@
-import logging
-
-from dotenv import load_dotenv
-from pydantic import ValidationError
 from pydantic_settings import BaseSettings
-
-logger = logging.getLogger(__name__)
 
 
 # --- Environment Loading ---
@@ -25,15 +19,3 @@ class Config(BaseSettings):
     ssh_host: str = "0.0.0.0"
     ssh_port: str = "8022"
     ip_hash_salt: str
-
-
-_ = load_dotenv(override=True)
-
-
-# --- Validation ---
-def validate_config() -> None:
-    try:
-        config: Config = Config()
-    except ValidationError:
-        logger.exception("[FATAL ERROR] Missing environment variables")
-        raise

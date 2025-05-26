@@ -3,7 +3,9 @@ import hashlib
 from datetime import datetime, timezone
 from typing import Optional, Tuple, List, Dict
 from wcwidth import wcswidth, wcwidth as get_char_width
-from config import ITTER_DEBUG_MODE, IP_HASH_SALT
+
+# from config import ITTER_DEBUG_MODE, IP_HASH_SALT
+from itter.context import config
 
 # --- ANSI Escape Codes ---
 # Reset
@@ -38,7 +40,7 @@ ANSI_ESCAPE_RE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
 
 # --- Logging ---
 def debug_log(msg: str) -> None:
-    if ITTER_DEBUG_MODE:
+    if config.itter_debug_mode:
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
         print(f"[{timestamp} DEBUG] {msg}")
 
@@ -165,14 +167,14 @@ def format_eet_content(
 
 # --- IP Hashing ---
 def hash_ip(ip_address: str) -> Optional[str]:
-    if not IP_HASH_SALT:
+    if not config.ip_hash_salt:
         debug_log("IP_HASH_SALT is not set. Cannot hash IP.")
         return None
     if not ip_address:
         debug_log("No IP address provided to hash.")
         return None
     try:
-        salted_ip = IP_HASH_SALT + ip_address
+        salted_ip = config.ip_hash_salt + ip_address
         hashed_ip = hashlib.sha256(salted_ip.encode("utf-8")).hexdigest()
         return hashed_ip
     except Exception as e:

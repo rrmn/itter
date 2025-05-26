@@ -1,14 +1,25 @@
 import asyncio
+import logging
 import sys
 import traceback
 
 import typer
+from pydantic import ValidationError
 from realtime import AsyncRealtimeClient  # Need this for type hint
 from supabase import Client, create_client  # Need Client for type hint
 
-# Import our refactored modules
-from itter import config, database, realtime_manager, ssh_server, utils
+from itter import database, realtime_manager, ssh_server, utils
 
+# Import our refactored modules
+from itter.config import Config
+from itter.context import config, db_client_ctx, rt_client_ctx
+
+logging.basicConfig(
+    level=logging.DEBUG,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+logger = logging.getLogger(__name__)
 # --- Global State ---
 # Use forward reference for ItterShell type hint
 active_sessions: dict[str, ssh_server.ItterShell] = {}
@@ -17,30 +28,27 @@ active_sessions: dict[str, ssh_server.ItterShell] = {}
 # --- Initialization ---
 def initialize_clients() -> None:
     """Initialize Supabase and Realtime clients."""
-    # supabase_client: Client | None = None
-    # rt_client: AsyncRealtimeClient | None = None
     try:
-        utils.debug_log("Creating Supabase client...")
+        logger.debug("Creating Supabase client...")
         supabase_client: Client = create_client(
-            config.SUPABASE_URL, config.SUPABASE_KEY
+            config.supabase_url,
+            config.supabase_key,
         )
-        database.init_db(supabase_client)  # Pass client to DB module
-        utils.debug_log("Supabase client created and DB module initialized.")
-    except Exception as e:
-        sys.stderr.write(f"[FATAL ERROR] Unable to create Supabase client: {e}\n")
+        db_client_ctx.set(supabase_client)
+    except Exception:  # TODO: exception handling
+        logger.exception("Unable to create Supabase client")
         sys.exit(1)
 
     try:
-        utils.debug_log("Creating Realtime client...")
+        logger.debug("Creating Realtime client...")
         # Ensure realtime client is created correctly
-        rt_client = AsyncRealtimeClient(config.SUPABASE_WSURL, config.SUPABASE_KEY)
-        realtime_manager.init_realtime(
-            rt_client, active_sessions
-        )  # Pass client and sessions dict
-        utils.debug_log(
-            "Realtime client created and Realtime manager module initialized."
+        rt_client: AsyncRealtimeClient = AsyncRealtimeClient(
+            config.supabase_wsurl,
+            config.supabase_key,
         )
-    except Exception as e:
+        rt_client_ctx.set(rt_client)
+        logger.debug("Realtime client created and Realtime manager module intialized.")
+    except Exception:
         sys.stderr.write(f"[FATAL ERROR] Unable to create Realtime client: {e}\n")
         sys.exit(1)
 
@@ -95,7 +103,12 @@ def create_user(username: str, public_key_file: typer.FileText):
 
 # --- Entry Point ---
 if __name__ == "__main__":
-    config.validate_config()  # Validate essential config first
+    # config.validate_config()  # Validate essential config first
+    try:
+        config: Config = Config()
+    except ValidationError:
+        logger.exception("[FATAL ERROR] Missing environment variables")
+        sys.exit(1)
 
     if len(sys.argv) > 1 and sys.argv[1] == "cli":
         utils.debug_log("Running in CLI mode.")
@@ -105,7 +118,7 @@ if __name__ == "__main__":
         cli_app(args=cli_app_args)
     else:
         utils.debug_log("Running in Server mode.")
-        initialize_clients()  # Initialize Supabase & Realtime
+        initialize_clients(config=config)  # Initialize Supabase & Realtime
         try:
             asyncio.run(main_server_loop())
         except KeyboardInterrupt:

@@ -1,17 +1,18 @@
 import asyncio
-import asyncssh
 import re
-import textwrap
 import sys
-from typing import Optional, Dict, Any, List, Tuple
+import textwrap
+from typing import Any, Dict, List, Optional, Tuple
+
+import asyncssh
 
 # Import from our modules
-import database as db
-import utils
-import config
-from command_history import CommandHistory
+from itter import database as db
+from itter import utils
+from itter.command_history import CommandHistory
+from itter.context import config
 
-from utils import BOLD, FG_BRIGHT_BLACK, RESET, FG_CYAN, FG_MAGENTA
+# from utils import BOLD, FG_BRIGHT_BLACK, RESET, FG_CYAN, FG_MAGENTA
 
 # Global reference - will be set by main.py
 # Use forward reference for type hint to avoid circular import if needed later
