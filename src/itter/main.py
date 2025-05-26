@@ -1,31 +1,29 @@
 import asyncio
 import sys
 import traceback
+
 import typer
-from typing import Dict, Optional
-from supabase import create_client, Client  # Need Client for type hint
 from realtime import AsyncRealtimeClient  # Need this for type hint
+from supabase import Client, create_client  # Need Client for type hint
 
 # Import our refactored modules
-import config
-import utils
-import database
-import realtime_manager  # Use the renamed file
-import ssh_server
+from itter import config, database, realtime_manager, ssh_server, utils
 
 # --- Global State ---
 # Use forward reference for ItterShell type hint
-active_sessions: Dict[str, "ssh_server.ItterShell"] = {}
+active_sessions: dict[str, ssh_server.ItterShell] = {}
 
 
 # --- Initialization ---
-def initialize_clients():
+def initialize_clients() -> None:
     """Initialize Supabase and Realtime clients."""
-    supabase_client: Optional[Client] = None
-    rt_client: Optional[AsyncRealtimeClient] = None
+    # supabase_client: Client | None = None
+    # rt_client: AsyncRealtimeClient | None = None
     try:
         utils.debug_log("Creating Supabase client...")
-        supabase_client = create_client(config.SUPABASE_URL, config.SUPABASE_KEY)
+        supabase_client: Client = create_client(
+            config.SUPABASE_URL, config.SUPABASE_KEY
+        )
         database.init_db(supabase_client)  # Pass client to DB module
         utils.debug_log("Supabase client created and DB module initialized.")
     except Exception as e:
@@ -70,7 +68,7 @@ cli_app = typer.Typer()
 @cli_app.command()
 def create_user(username: str, public_key_file: typer.FileText):
     """Manually create a user (e.g., for admin purposes)."""
-    supabase_cli_client: Optional[Client] = None
+    supabase_cli_client: Client | None = None
     try:
         supabase_cli_client = create_client(config.SUPABASE_URL, config.SUPABASE_KEY)
         database.init_db(supabase_cli_client)

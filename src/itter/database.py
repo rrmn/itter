@@ -1,12 +1,14 @@
 import asyncio
-from typing import Optional, Dict, Any, List
-from supabase import Client
-from utils import debug_log, hash_ip
 import traceback
-from config import ITTER_DEBUG_MODE, EET_MAX_LENGTH, DEFAULT_TIMELINE_PAGE_SIZE
+from typing import Any
+
+from supabase import Client
+
+from itter.config import DEFAULT_TIMELINE_PAGE_SIZE, EET_MAX_LENGTH, ITTER_DEBUG_MODE
+from itter.utils import debug_log, hash_ip
 
 # Placeholder for the client - will be initialized in main.py
-supabase_client: Optional[Client] = None
+supabase_client: Client | None = None
 
 
 def init_db(client: Client):
@@ -19,7 +21,7 @@ def init_db(client: Client):
 # --- User Operations ---
 
 
-async def db_get_user_by_username(username: str) -> Optional[Dict[str, Any]]:
+async def db_get_user_by_username(username: str) -> dict[str, Any] | None:
     if not supabase_client:
         raise RuntimeError("Database not initialized")
     debug_log(f"DB: get_user_by_username('{username}')")
@@ -33,7 +35,7 @@ async def db_get_user_by_username(username: str) -> Optional[Dict[str, Any]]:
         return None
 
 
-async def db_get_user_by_id(user_id: str) -> Optional[Dict[str, Any]]:
+async def db_get_user_by_id(user_id: str) -> dict[str, Any] | None:
     if not supabase_client:
         raise RuntimeError("Database not initialized")
     debug_log(f"DB: get_user_by_id('{user_id}')")
@@ -47,7 +49,7 @@ async def db_get_user_by_id(user_id: str) -> Optional[Dict[str, Any]]:
         return None
 
 
-async def db_username_exists_case_insensitive(username: str) -> Optional[str]:
+async def db_username_exists_case_insensitive(username: str) -> str | None:
     if not supabase_client:
         raise RuntimeError("Database not initialized")
     debug_log(f"DB: db_username_exists_case_insensitive('{username}')")
@@ -85,9 +87,9 @@ async def db_create_user(username: str, public_key: str) -> None:
 
 async def db_update_profile(
     username: str,
-    new_display_name: Optional[str],
-    new_email: Optional[str],
-    reset: Optional[bool] = False,
+    new_display_name: str | None,
+    new_email: str | None,
+    reset: bool | None = False,
 ) -> None:
     if not supabase_client:
         raise RuntimeError("Database not initialized")
@@ -123,7 +125,7 @@ async def db_update_profile(
         raise e
 
 
-async def db_get_profile_stats(username: str) -> Dict[str, Any]:
+async def db_get_profile_stats(username: str) -> dict[str, Any]:
     if not supabase_client:
         raise RuntimeError("Database not initialized")
     debug_log(f"DB: get_profile_stats('{username}')")
@@ -418,7 +420,7 @@ async def db_unignore_user(
         raise e
 
 
-async def db_get_ignored_user_ids(username: str) -> List[str]:
+async def db_get_ignored_user_ids(username: str) -> list[str]:
     if not supabase_client:
         raise RuntimeError("Database not initialized")
     user = await db_get_user_by_username(username)
@@ -439,7 +441,7 @@ async def db_get_ignored_user_ids(username: str) -> List[str]:
 
 
 # --- RPC-based list functions ---
-async def db_get_user_following(current_username: str) -> List[Dict[str, Any]]:
+async def db_get_user_following(current_username: str) -> list[dict[str, Any]]:
     """Gets a list of users the current_username is following."""
     if not supabase_client:
         raise RuntimeError("Database not initialized")
@@ -466,7 +468,7 @@ async def db_get_user_following(current_username: str) -> List[Dict[str, Any]]:
         return []
 
 
-async def db_get_user_followers(current_username: str) -> List[Dict[str, Any]]:
+async def db_get_user_followers(current_username: str) -> list[dict[str, Any]]:
     """Gets a list of users following the current_username."""
     if not supabase_client:
         raise RuntimeError("Database not initialized")
@@ -493,7 +495,7 @@ async def db_get_user_followers(current_username: str) -> List[Dict[str, Any]]:
         return []
 
 
-async def db_get_user_ignoring(current_username: str) -> List[Dict[str, Any]]:
+async def db_get_user_ignoring(current_username: str) -> list[dict[str, Any]]:
     """Gets a list of users the current_username is ignoring."""
     if not supabase_client:
         raise RuntimeError("Database not initialized")
@@ -520,7 +522,7 @@ async def db_get_user_ignoring(current_username: str) -> List[Dict[str, Any]]:
         return []
 
 
-async def db_get_user_following_channels(current_username: str) -> List[Dict[str, Any]]:
+async def db_get_user_following_channels(current_username: str) -> list[dict[str, Any]]:
     """Gets a list of channels the current_username is following."""
     if not supabase_client:
         raise RuntimeError("Database not initialized")
@@ -555,9 +557,9 @@ async def db_get_user_following_channels(current_username: str) -> List[Dict[str
 async def db_post_eet(
     username: str,
     content: str,
-    tags: List[str],
-    mentions: List[str],
-    client_ip: Optional[str] = None,
+    tags: list[str],
+    mentions: list[str],
+    client_ip: str | None = None,
 ) -> None:
     if not supabase_client:
         raise RuntimeError("Database not initialized")
@@ -606,10 +608,10 @@ async def db_post_eet(
 
 async def db_get_filtered_timeline_posts(
     current_username: str,
-    target_filter: Dict[str, Any],
+    target_filter: dict[str, Any],
     page: int = 1,
     page_size: int = DEFAULT_TIMELINE_PAGE_SIZE,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     if not supabase_client:
         raise RuntimeError("Database not initialized")
     debug_log(
@@ -624,8 +626,8 @@ async def db_get_filtered_timeline_posts(
         return []
     user_uuid = user["id"]
 
-    rpc_name: Optional[str] = None
-    rpc_params: Dict[str, Any] = {
+    rpc_name: str | None = None
+    rpc_params: dict[str, Any] = {
         "input_user_id": user_uuid,
         "p_page": page,
         "p_page_size": page_size,
