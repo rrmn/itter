@@ -7,22 +7,19 @@ from typing import Dict, Any, Optional
 # Import from the actual library now that the name conflict is resolved
 from realtime import AsyncRealtimeClient, RealtimeSubscribeStates
 from itter.utils import debug_log
+from itter.context import rt_client_ctx
 # Import the specific type hint for the shell if needed for type checking within this file
 # from ssh_server import ItterShell # <--- Uncomment if you need detailed type checking
 
-# Placeholder for the client - will be initialized in main.py
-rt_client: Optional[AsyncRealtimeClient] = None
 # Placeholder for active sessions - will be passed in (use Any for now to avoid circular import if ItterShell not imported)
 active_sessions_ref: Optional[Dict[str, Any]] = None
 
+logging.basicConfig(
+    level=logging.DEBUG,
+    format="[%(levelname)s] - %(asctime)s - %(name)s - %(funcName)s - %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
 logger = logging.getLogger(__name__)
-
-# def init_realtime(client: AsyncRealtimeClient, sessions_dict: Dict[str, Any]):
-#     """Initializes the realtime module with the client and session reference."""
-#     global rt_client, active_sessions_ref
-#     rt_client = client
-#     active_sessions_ref = sessions_dict
-#     logger.debug("Realtime manager module initialized.")
 
 
 async def handle_global_new_post_event(payload: Dict[str, Any]):
@@ -63,18 +60,18 @@ async def handle_global_new_post_event(payload: Dict[str, Any]):
 
 async def start_realtime():
     """Connects to Realtime, sets up subscriptions, and starts listening."""
-    if not rt_client:
+    if not rt_client_ctx:
         raise RuntimeError("Realtime client not initialized")
 
-    debug_log("Connecting to Supabase Realtime...")
+    logger.debug("Connecting to Supabase Realtime")
     try:
-        await rt_client.connect()
+        await rt_client_ctx.get().connect()
     except Exception as e:
         sys.stderr.write(f"[FATAL ERROR] Realtime connect failed: {e}\n")
         sys.exit(1)  # Exit if connection fails
 
     # Use a specific channel name (can be anything descriptive)
-    realtime_posts_channel = rt_client.channel("itter:posts_feed")
+    realtime_posts_channel = rt_client_ctx.get().channel("itter:posts_feed")
 
     realtime_posts_channel.on_postgres_changes(
         event="INSERT",
@@ -84,11 +81,11 @@ async def start_realtime():
     )
 
     def rt_subscribe_callback(status: RealtimeSubscribeStates, err=None):
-        debug_log(
-            f"[Realtime Posts Channel] Subscription status: {status}, error: {err}"
+        logger.debug(
+            "[Realtime Posts Channel] Subscription status: %s, %s", status, err
         )
         if status == RealtimeSubscribeStates.SUBSCRIBED:
-            debug_log("Successfully subscribed to new post events.")
+            logger.debug("Successfully subscribed to new post events.")
         elif status in [
             RealtimeSubscribeStates.CHANNEL_ERROR,
             RealtimeSubscribeStates.TIMED_OUT,
@@ -96,17 +93,17 @@ async def start_realtime():
             sys.stderr.write(f"[ERROR] Realtime subscription failed: {status}, {err}\n")
 
     try:
-        debug_log("Subscribing to Realtime posts channel...")
+        logger.debug("Subscribing to Realtime posts channel...")
         await realtime_posts_channel.subscribe(rt_subscribe_callback)
     except Exception as e:
         sys.stderr.write(
             f"[ERROR] Realtime channel subscribe error: {e}\n"
         )  # Changed to ERROR level
-        debug_log(f"Realtime subscription failed, live updates may be impaired: {e}")
+        logger.exception("Realtime subscription failed, live updates may be impaired.")
 
     # Start listening in the background
     try:
-        asyncio.create_task(rt_client.listen())
-        debug_log("Realtime listener started in background task.")
+        asyncio.create_task(rt_client_ctx.get().listen())
+        logger.debug("Realtime listener started in background task.")
     except Exception as ex:
-        debug_log(f"Realtime listen error: {ex}. Realtime features might be affected.")
+        logger.exception("Realtime listen error; realtime features might be affected.")

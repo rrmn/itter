@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import re
 import sys
 import textwrap
@@ -11,12 +12,24 @@ from itter import database as db
 from itter import utils
 from itter.command_history import CommandHistory
 from itter.context import config
+from itter.utils import (
+    BOLD,
+    FG_BRIGHT_BLACK,
+    RESET,
+    FG_CYAN,
+    FG_MAGENTA,
+    FG_BRIGHT_YELLOW,
+)
 
-# from utils import BOLD, FG_BRIGHT_BLACK, RESET, FG_CYAN, FG_MAGENTA
-
+logging.basicConfig(
+    level=logging.DEBUG,
+    format="[%(levelname)s] - %(asctime)s - %(name)s - %(funcName)s - %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+logger = logging.getLogger(__name__)
 # Global reference - will be set by main.py
 # Use forward reference for type hint to avoid circular import if needed later
-active_sessions_ref: Optional[Dict[str, "ItterShell"]] = None
+active_sessions_ref: dict[str, "ItterShell"] | None = None
 
 
 def init_ssh(sessions_dict: Dict[str, "ItterShell"]):  # <-- Update type hint
@@ -312,11 +325,11 @@ class ItterShell(asyncssh.SSHServerSession):
         )
         self._client_ip: Optional[str] = None
 
-        self._timeline_page_size = config.DEFAULT_TIMELINE_PAGE_SIZE
+        self._timeline_page_size = config.default_timeline_page_size
         self._last_timeline_eets_count: Optional[int] = None  # For PgUp/PgDn context
 
         try:
-            with open(config.BANNER_FILE, "r") as f:
+            with open(config.banner_file, "r") as f:
                 self._banner_text = f.read()
         except FileNotFoundError:
             self._banner_text = "Welcome to itter.sh!\n(Banner file not found)"
@@ -454,7 +467,7 @@ class ItterShell(asyncssh.SSHServerSession):
     def _show_help(self):
         help_text = (
             f"\r\nitter.sh Commands:\r\n"
-            f"  {BOLD}e{RESET}et {FG_BRIGHT_BLACK}<text>{RESET}                     - Post an eet (max {config.EET_MAX_LENGTH} chars).\r\n"
+            f"  {BOLD}e{RESET}et {FG_BRIGHT_BLACK}<text>{RESET}                     - Post an eet (max {config.eet_max_length} chars).\r\n"
             f"  {BOLD}w{RESET}atch {FG_BRIGHT_BLACK}[mine|all|#chan|@user]{RESET}   - Live timeline view (Default: all).\r\n"
             f"  {BOLD}t{RESET}ime{BOLD}l{RESET}ine {FG_BRIGHT_BLACK}[mine|all|#chan|@user] [<page>]{RESET} - Show eets (Default: all, 1).\r\n"
             f"  {BOLD}f{RESET}ollow {FG_BRIGHT_BLACK}[#chan|@user] --list{RESET}    - Follow a user or channel, list follows.\r\n"
@@ -789,9 +802,9 @@ class ItterShell(asyncssh.SSHServerSession):
                 content = raw_text_full.strip()
                 if not content:
                     self._write_to_channel("Usage: eet <text>")
-                elif len(content) > config.EET_MAX_LENGTH:
+                elif len(content) > config.eet_max_length:
                     self._write_to_channel(
-                        f"ERROR: Eet too long! Max {config.EET_MAX_LENGTH}."
+                        f"ERROR: Eet too long! Max {config.eet_max_length}."
                     )
                 else:
                     await db.db_post_eet(
@@ -1000,15 +1013,15 @@ class ItterShell(asyncssh.SSHServerSession):
                     self._write_to_channel(
                         f"\r\nCurrent settings:\r\n"
                         f"  Eets per page: {BOLD}{self._timeline_page_size}{RESET}\r\n"
-                        f"  {FG_BRIGHT_BLACK}Usage:{RESET} settings pagesize <{config.MIN_TIMELINE_PAGE_SIZE}-{config.MAX_TIMELINE_PAGE_SIZE}>"
+                        f"  {FG_BRIGHT_BLACK}Usage:{RESET} settings pagesize <{config.min_timeline_page_size}-{config.max_timeline_page_size}>"
                     )
                 elif len(parts) == 2 and parts[0] == "pagesize":
                     try:
                         new_size = int(parts[1])
                         if (
-                            config.MIN_TIMELINE_PAGE_SIZE
+                            config.min_timeline_page_size
                             <= new_size
-                            <= config.MAX_TIMELINE_PAGE_SIZE
+                            <= config.max_timeline_page_size
                         ):
                             self._timeline_page_size = new_size
                             self._write_to_channel(
@@ -1016,13 +1029,13 @@ class ItterShell(asyncssh.SSHServerSession):
                             )
                         else:
                             self._write_to_channel(
-                                f"Error: Page size must be between {config.MIN_TIMELINE_PAGE_SIZE} and {config.MAX_TIMELINE_PAGE_SIZE}."
+                                f"Error: Page size must be between {config.min_timeline_page_size} and {config.max_timeline_page_size}."
                             )
                     except ValueError:
                         self._write_to_channel("That... was not a number.")
                 else:
                     self._write_to_channel(
-                        f"{FG_BRIGHT_BLACK}Usage:{RESET} settings pagesize <{config.MIN_TIMELINE_PAGE_SIZE}-{config.MAX_TIMELINE_PAGE_SIZE}>"
+                        f"{FG_BRIGHT_BLACK}Usage:{RESET} settings pagesize <{config.min_timeline_page_size}-{config.max_timeline_page_size}>"
                     )
             elif cmd == "help" or cmd == "h":
                 self._display_welcome_banner()
@@ -1046,7 +1059,7 @@ class ItterShell(asyncssh.SSHServerSession):
         except Exception as e:
             utils.debug_log(f"Error handling command '{cmd}': {e}")
             self._write_to_channel("An unexpected server error occurred.")
-            if config.ITTER_DEBUG_MODE:
+            if config.itter_debug_mode:
                 import traceback
 
                 self._write_to_channel(traceback.format_exc())
@@ -1180,7 +1193,7 @@ class ItterShell(asyncssh.SSHServerSession):
     async def _timeline_refresh_loop(self):
         try:
             while self._is_watching_timeline:
-                await asyncio.sleep(config.WATCH_REFRESH_INTERVAL_SECONDS)
+                await asyncio.sleep(config.watch_refresh_interval_seconds)
                 if self._is_watching_timeline:
                     utils.debug_log("Live timeline auto-refresh triggered.")
                     # Live refresh always fetches page 1 of the current filter
@@ -1453,21 +1466,21 @@ class ItterShell(asyncssh.SSHServerSession):
 
 # --- SSH Server Start Function ---
 async def start_ssh_server(
-    sessions_dict: Dict[str, ItterShell],
+    sessions_dict: dict[str, ItterShell],
 ):  # Use correct type hint
     """Starts the AsyncSSH server."""
     init_ssh(sessions_dict)
-    utils.debug_log(f"Starting SSH server on {config.SSH_HOST}:{config.SSH_PORT}")
+    logger.debug("Starting SSH server on %s:%s", config.ssh_host, config.ssh_port)
     try:
         await asyncssh.create_server(
             ItterSSHServer,
-            config.SSH_HOST,
-            config.SSH_PORT,
-            server_host_keys=[config.SSH_HOST_KEY_PATH],
+            config.ssh_host,
+            config.ssh_port,
+            server_host_keys=[config.ssh_host_key_path],
             line_editor=False,  # We handle line editing
             # term_type='xterm-256color' # Can suggest a term type to client
         )
-        print(f"itter.sh server humming on ssh://{config.SSH_HOST}:{config.SSH_PORT}")
+        print(f"itter.sh server humming on ssh://{config.ssh_host}:{config.ssh_port}")
         print("Ctrl+C to stop.")
     except Exception as e:
         sys.stderr.write(f"[FATAL ERROR] SSH server failed to start: {e}\n")

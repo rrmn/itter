@@ -4,19 +4,17 @@ import sys
 import traceback
 
 import typer
-from pydantic import ValidationError
 from realtime import AsyncRealtimeClient  # Need this for type hint
 from supabase import Client, create_client  # Need Client for type hint
 
-from itter import database, realtime_manager, ssh_server, utils
+from itter import database, realtime_manager, ssh_server
 
 # Import our refactored modules
-from itter.config import Config
 from itter.context import config, db_client_ctx, rt_client_ctx
 
 logging.basicConfig(
     level=logging.DEBUG,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    format="[%(levelname)s] - %(asctime)s - %(name)s - %(funcName)s - %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 logger = logging.getLogger(__name__)
@@ -31,8 +29,8 @@ def initialize_clients() -> None:
     try:
         logger.debug("Creating Supabase client...")
         supabase_client: Client = create_client(
-            config.supabase_url,
-            config.supabase_key,
+            supabase_url=config.supabase_url,
+            supabase_key=config.supabase_key,
         )
         db_client_ctx.set(supabase_client)
     except Exception:  # TODO: exception handling
@@ -49,14 +47,14 @@ def initialize_clients() -> None:
         rt_client_ctx.set(rt_client)
         logger.debug("Realtime client created and Realtime manager module intialized.")
     except Exception:
-        sys.stderr.write(f"[FATAL ERROR] Unable to create Realtime client: {e}\n")
+        logger.exception("Unable to create Realtime client")
         sys.exit(1)
 
 
 # --- Main Server Loop ---
 async def main_server_loop():
     """Initializes and runs the main application components."""
-    utils.debug_log("Starting main server loop...")
+    logger.debug("Starting main server loop...")
     # Start Realtime listener (connects, subscribes, and listens in background)
     await realtime_manager.start_realtime()  # Use renamed module
 
@@ -66,7 +64,7 @@ async def main_server_loop():
     # Keep the main loop alive (Realtime listen runs in background)
     while True:
         await asyncio.sleep(3600)
-        utils.debug_log("Hourly keep-alive tick.")
+        logger.debug("Hourly keep-alive tick.")
 
 
 # --- CLI Handling ---
@@ -76,61 +74,47 @@ cli_app = typer.Typer()
 @cli_app.command()
 def create_user(username: str, public_key_file: typer.FileText):
     """Manually create a user (e.g., for admin purposes)."""
-    supabase_cli_client: Client | None = None
-    try:
-        supabase_cli_client = create_client(config.SUPABASE_URL, config.SUPABASE_KEY)
-        database.init_db(supabase_cli_client)
-    except Exception as e:
-        typer.echo(f"Error initializing DB for CLI: {e}", err=True)
-        raise typer.Exit(code=1)
-
     typer.echo(f"Attempting to create user '{username}'...")
+    logger.debug("Attempting to create user: %s", username)
     key_content = public_key_file.read().strip()
     if not key_content:
         typer.echo("Error: Public key file is empty.", err=True)
         raise typer.Exit(code=1)
     try:
 
-        async def _create():
-            await database.db_create_user(username, key_content)
+        async def _create() -> None:
+            result = await database.db_create_user(username, key_content)
+            logger.debug(result)
 
         asyncio.run(_create())
         typer.echo(f"User '{username}' created successfully!")
     except Exception as e:
         typer.echo(f"Error creating user: {e}", err=True)
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from e
 
 
 # --- Entry Point ---
 if __name__ == "__main__":
-    # config.validate_config()  # Validate essential config first
-    try:
-        config: Config = Config()
-    except ValidationError:
-        logger.exception("[FATAL ERROR] Missing environment variables")
-        sys.exit(1)
-
     if len(sys.argv) > 1 and sys.argv[1] == "cli":
-        utils.debug_log("Running in CLI mode.")
+        logger.debug("Running in CLI mode")
+        initialize_clients()
         cli_app_args = sys.argv[2:]
         if not cli_app_args:
             cli_app_args = ["--help"]
         cli_app(args=cli_app_args)
     else:
-        utils.debug_log("Running in Server mode.")
-        initialize_clients(config=config)  # Initialize Supabase & Realtime
+        logger.debug("Running in Server mode.")
+        initialize_clients()  # Initialize Supabase & Realtime
         try:
             asyncio.run(main_server_loop())
         except KeyboardInterrupt:
-            print("\n[INFO] itter.sh server shutting down... Did we have fun?")
-        except Exception as top_level_ex:
-            sys.stderr.write(
-                f"[FATAL CRASH] Unhandled top-level exception: {top_level_ex}\n"
-            )
+            logger.info("itter.sh server shutting down... Did we have fun?")
+        except Exception:
+            logger.exception("Unhandled top-level exception")
             traceback.print_exc()
         finally:
             # Check the client exists on the manager module before trying to close
-            if realtime_manager.rt_client and realtime_manager.rt_client.is_connected:
-                utils.debug_log("Closing Realtime connection...")
-                asyncio.run(realtime_manager.rt_client.close())
-            utils.debug_log("itter.sh has exited.")
+            if rt_client_ctx and rt_client_ctx.get().is_connected:
+                logger.debug("Closing realtime connection...")
+                asyncio.run(rt_client_ctx.get().close())
+            logger.debug("itter.sh has exited.")
