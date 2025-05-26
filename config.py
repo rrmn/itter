@@ -1,4 +1,3 @@
-# /Users/roman/work/itter/config.py
 import os
 import sys
 from dotenv import load_dotenv

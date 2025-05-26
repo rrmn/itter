@@ -1,0 +1,14 @@
+[project]
+name = "itter"
+version = "0.1.0"
+description = "Micro-Blogging via Terminal"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "asyncssh>=2.21.0",
+    "python-dotenv>=1.1.0",
+    "supabase>=2.15.2",
+    "textwrap ; python_full_version < '3.9'",
+    "typer>=0.15.4",
+    "wcwidth>=0.2.13",
+]
