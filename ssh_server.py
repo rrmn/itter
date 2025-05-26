@@ -11,7 +11,7 @@ import utils
 import config
 from command_history import CommandHistory
 
-from utils import BOLD, FG_BRIGHT_BLACK, RESET, FG_CYAN, FG_MAGENTA, FG_BRIGHT_YELLOW
+from utils import BOLD, FG_BRIGHT_BLACK, RESET, FG_CYAN, FG_MAGENTA
 
 # Global reference - will be set by main.py
 # Use forward reference for type hint to avoid circular import if needed later
@@ -262,7 +262,7 @@ class ItterSSHServer(asyncssh.SSHServer):
             # This means begin_auth likely failed or didn't establish a user,
             # but other auth (e.g. public key without specific user context) passed.
             utils.debug_log(
-                f"[CRITICAL] session_requested: No valid user context (not registration, no current_username). Refusing session."
+                "[CRITICAL] session_requested: No valid user context (not registration, no current_username). Refusing session."
             )
             # self._conn.send_auth_banner("Authentication failed to establish user context. Please try again.\r\n") # Optional
             # self._conn.disconnect(...) # Optional
@@ -1044,7 +1044,7 @@ class ItterShell(asyncssh.SSHServerSession):
             self._write_to_channel(f"Error: {ve}")
         except Exception as e:
             utils.debug_log(f"Error handling command '{cmd}': {e}")
-            self._write_to_channel(f"An unexpected server error occurred.")
+            self._write_to_channel("An unexpected server error occurred.")
             if config.ITTER_DEBUG_MODE:
                 import traceback
 
@@ -1120,7 +1120,7 @@ class ItterShell(asyncssh.SSHServerSession):
                     + f"  Eets:         {stats['eet_count']}\r\n"
                     + f"  Following:    {stats['following_count']}\r\n"
                     + f"  Followers:    {stats['follower_count']}\r\n"
-                    + f"---------------------------\r\n"
+                    + "---------------------------\r\n"
                 )
                 self._clear_screen()
                 self._display_welcome_banner()
