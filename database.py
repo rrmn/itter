@@ -1,4 +1,3 @@
-# /Users/roman/work/itter/database.py
 import asyncio
 from typing import Optional, Dict, Any, List
 from supabase import Client
@@ -47,6 +46,7 @@ async def db_get_user_by_id(user_id: str) -> Optional[Dict[str, Any]]:
         debug_log(f"[DB ERROR] get_user_by_id: {e}")
         return None
 
+
 async def db_username_exists_case_insensitive(username: str) -> Optional[str]:
     if not supabase_client:
         raise RuntimeError("Database not initialized")
@@ -84,7 +84,10 @@ async def db_create_user(username: str, public_key: str) -> None:
 
 
 async def db_update_profile(
-    username: str, new_display_name: Optional[str], new_email: Optional[str], reset: Optional[bool] = False
+    username: str,
+    new_display_name: Optional[str],
+    new_email: Optional[str],
+    reset: Optional[bool] = False,
 ) -> None:
     if not supabase_client:
         raise RuntimeError("Database not initialized")
@@ -94,7 +97,7 @@ async def db_update_profile(
     user = await db_get_user_by_username(username)
     if not user:
         raise ValueError("User not found for profile update.")
-    
+
     update_data = {}
     if new_display_name is not None:
         update_data["display_name"] = new_display_name
@@ -594,9 +597,7 @@ async def db_post_eet(
 
     try:
         await asyncio.to_thread(
-            supabase_client.table("posts")
-            .insert(post_data)
-            .execute
+            supabase_client.table("posts").insert(post_data).execute
         )
     except Exception as e:
         debug_log(f"[DB ERROR] db_post_eet: {e}")
@@ -644,9 +645,7 @@ async def db_get_filtered_timeline_posts(
             )
             return []
         rpc_name = "get_channel_timeline"
-        rpc_params["p_channel_tag"] = (
-            filter_value.lower()
-        )
+        rpc_params["p_channel_tag"] = filter_value.lower()
     elif filter_type == "user":
         if not filter_value or not isinstance(filter_value, str):
             debug_log(

@@ -1,4 +1,3 @@
-# /Users/roman/work/itter/main.py
 import asyncio
 import sys
 import traceback
