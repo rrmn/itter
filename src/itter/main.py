@@ -2,6 +2,7 @@ import asyncio
 import logging
 import sys
 import traceback
+from typing import Annotated
 
 import typer
 from realtime import AsyncRealtimeClient  # Need this for type hint
@@ -68,12 +69,26 @@ async def main_server_loop():
 
 
 # --- CLI Handling ---
-cli_app = typer.Typer()
+app = typer.Typer()
+cli_app: typer.Typer = typer.Typer()
+server_app: typer.Typer = typer.Typer()
+app.add_typer(typer_instance=cli_app, name="cli")
+app.add_typer(typer_instance=server_app, name="server")
 
 
 @cli_app.command()
-def create_user(username: str, public_key_file: typer.FileText):
+def register(
+    username: Annotated[
+        str,
+        typer.Option("--username", metavar="username", help="Username to create"),
+    ],
+    public_key_file: Annotated[
+        typer.FileText,
+        typer.Option("--public-key", metavar="filename", help="Public key file"),
+    ],
+):
     """Manually create a user (e.g., for admin purposes)."""
+    initialize_clients()
     typer.echo(f"Attempting to create user '{username}'...")
     logger.debug("Attempting to create user: %s", username)
     key_content = public_key_file.read().strip()
@@ -93,28 +108,39 @@ def create_user(username: str, public_key_file: typer.FileText):
         raise typer.Exit(code=1) from e
 
 
+@cli_app.command()
+def login(
+    username: Annotated[
+        str,
+        typer.Option("--username", metavar="username", help="Username to create"),
+    ],
+    public_key_file: Annotated[
+        typer.FileText,
+        typer.Option("--public-key", metavar="filename", help="Public key file"),
+    ],
+):
+    logger.debug("Attempting to login with username: %s", username)
+
+
+@server_app.command()
+def run() -> None:
+    logger.debug("Running in Server mode.")
+    initialize_clients()  # Initialize Supabase & Realtime
+    try:
+        asyncio.run(main_server_loop())
+    except KeyboardInterrupt:
+        logger.info("itter.sh server shutting down... Did we have fun?")
+    except Exception:
+        logger.exception("Unhandled top-level exception")
+        traceback.print_exc()
+    finally:
+        # Check the client exists on the manager module before trying to close
+        if rt_client_ctx and rt_client_ctx.get().is_connected:
+            logger.debug("Closing realtime connection...")
+            asyncio.run(rt_client_ctx.get().close())
+        logger.debug("itter.sh has exited.")
+
+
 # --- Entry Point ---
 if __name__ == "__main__":
-    if len(sys.argv) > 1 and sys.argv[1] == "cli":
-        logger.debug("Running in CLI mode")
-        initialize_clients()
-        cli_app_args = sys.argv[2:]
-        if not cli_app_args:
-            cli_app_args = ["--help"]
-        cli_app(args=cli_app_args)
-    else:
-        logger.debug("Running in Server mode.")
-        initialize_clients()  # Initialize Supabase & Realtime
-        try:
-            asyncio.run(main_server_loop())
-        except KeyboardInterrupt:
-            logger.info("itter.sh server shutting down... Did we have fun?")
-        except Exception:
-            logger.exception("Unhandled top-level exception")
-            traceback.print_exc()
-        finally:
-            # Check the client exists on the manager module before trying to close
-            if rt_client_ctx and rt_client_ctx.get().is_connected:
-                logger.debug("Closing realtime connection...")
-                asyncio.run(rt_client_ctx.get().close())
-            logger.debug("itter.sh has exited.")
+    app()
