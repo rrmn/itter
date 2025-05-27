@@ -2,15 +2,16 @@ import asyncio
 import logging
 import sys
 import traceback
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 import typer
 from realtime import AsyncRealtimeClient  # Need this for type hint
-from supabase import Client, create_client  # Need Client for type hint
+from supabase import create_client  # Need Client for type hint
+
+if TYPE_CHECKING:
+    from supabase import Client
 
 from itter import database, realtime_manager, ssh_server
-
-# Import our refactored modules
 from itter.context import config, db_client_ctx, rt_client_ctx
 
 logging.basicConfig(
@@ -21,7 +22,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 # --- Global State ---
 # Use forward reference for ItterShell type hint
-active_sessions: dict[str, ssh_server.ItterShell] = {}
 
 
 # --- Initialization ---
@@ -59,6 +59,7 @@ async def main_server_loop():
     # Start Realtime listener (connects, subscribes, and listens in background)
     await realtime_manager.start_realtime()  # Use renamed module
 
+    active_sessions: dict[str, ssh_server.ItterShell] = {}
     # Start SSH server (listens for connections)
     await ssh_server.start_ssh_server(active_sessions)  # Pass sessions dict
 

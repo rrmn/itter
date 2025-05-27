@@ -19,7 +19,7 @@ logging.basicConfig(
     format="[%(levelname)s] - %(asctime)s - %(name)s - %(funcName)s - %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
-logger = logging.getLogger(__name__)
+logger: logging.Logger = logging.getLogger(__name__)
 # Global reference - will be set by main.py
 # Use forward reference for type hint to avoid circular import if needed later
 
@@ -1457,10 +1457,10 @@ class ItterShell(asyncssh.SSHServerSession):
 
 # --- SSH Server Start Function ---
 async def start_ssh_server(
-    sessions_dict: dict[str, ItterShell],
+    active_sessions: dict[str, ItterShell],
 ):  # Use correct type hint
     """Starts the AsyncSSH server."""
-    init_ssh(sessions_dict)
+    init_ssh(active_sessions)
     logger.debug("Starting SSH server on %s:%s", config.ssh_host, config.ssh_port)
     try:
         _ = await asyncssh.create_server(

@@ -20,7 +20,7 @@ dev = [
 ]
 
 [project.scripts]
-itter = "itter:main"
+itter = "itter.main:app"
 
 [build-system]
 requires = ["hatchling"]
