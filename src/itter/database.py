@@ -1,32 +1,32 @@
-# /Users/roman/work/itter/database.py
 import asyncio
-from typing import Optional, Dict, Any, List
-from supabase import Client
-from utils import debug_log, hash_ip
+import logging
 import traceback
-from config import ITTER_DEBUG_MODE, EET_MAX_LENGTH, DEFAULT_TIMELINE_PAGE_SIZE
-
-# Placeholder for the client - will be initialized in main.py
-supabase_client: Optional[Client] = None
+from typing import Any
 
 
-def init_db(client: Client):
-    """Initializes the database module with the Supabase client."""
-    global supabase_client
-    supabase_client = client
-    debug_log("Database module initialized.")
+from itter.context import config, db_client_ctx
+from itter.utils import debug_log, hash_ip
+
+logging.basicConfig(
+    level=logging.DEBUG,
+    format="[%(levelname)s] - %(asctime)s - %(name)s - %(funcName)s - %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+logger = logging.getLogger(__name__)
 
 
 # --- User Operations ---
-
-
-async def db_get_user_by_username(username: str) -> Optional[Dict[str, Any]]:
-    if not supabase_client:
+async def db_get_user_by_username(username: str) -> dict[str, Any] | None:
+    if not db_client_ctx:
         raise RuntimeError("Database not initialized")
     debug_log(f"DB: get_user_by_username('{username}')")
     try:
         resp = await asyncio.to_thread(
-            supabase_client.table("users").select("*").eq("username", username).execute
+            db_client_ctx.get()
+            .table("users")
+            .select("*")
+            .eq("username", username)
+            .execute
         )
         return resp.data[0] if resp.data else None
     except Exception as e:
@@ -34,28 +34,30 @@ async def db_get_user_by_username(username: str) -> Optional[Dict[str, Any]]:
         return None
 
 
-async def db_get_user_by_id(user_id: str) -> Optional[Dict[str, Any]]:
-    if not supabase_client:
+async def db_get_user_by_id(user_id: str) -> dict[str, Any] | None:
+    if not db_client_ctx:
         raise RuntimeError("Database not initialized")
     debug_log(f"DB: get_user_by_id('{user_id}')")
     try:
         resp = await asyncio.to_thread(
-            supabase_client.table("users").select("*").eq("id", user_id).execute
+            db_client_ctx.get().table("users").select("*").eq("id", user_id).execute
         )
         return resp.data[0] if resp.data else None
     except Exception as e:
         debug_log(f"[DB ERROR] get_user_by_id: {e}")
         return None
 
-async def db_username_exists_case_insensitive(username: str) -> Optional[str]:
-    if not supabase_client:
+
+async def db_username_exists_case_insensitive(username: str) -> str | None:
+    if not db_client_ctx:
         raise RuntimeError("Database not initialized")
     debug_log(f"DB: db_username_exists_case_insensitive('{username}')")
 
     username_lower = username.lower()
     try:
         resp = await asyncio.to_thread(
-            supabase_client.table("users")
+            db_client_ctx.get()
+            .table("users")
             .select("username")
             .ilike("username", username_lower)
             .execute
@@ -68,25 +70,29 @@ async def db_username_exists_case_insensitive(username: str) -> Optional[str]:
 
 async def db_create_user(username: str, public_key: str) -> None:
     """Creates a new user entry."""
-    if not supabase_client:
+    if not db_client_ctx:
         raise RuntimeError("Database not initialized")
-    debug_log(f"DB: Creating user '{username}'")
+    logger.debug("Creating user: %s", username)
     try:
         await asyncio.to_thread(
-            supabase_client.table("users")
+            db_client_ctx.get()
+            .table("users")
             .insert({"username": username, "public_key": public_key})
-            .execute
+            .execute,
         )
-    except Exception as e:
-        debug_log(f"[DB ERROR] db_create_user: {e}")
+    except Exception:
+        logger.exception("Error creating user:")
         # Re-raise crucial errors like unique constraint violations
-        raise e
+        raise
 
 
 async def db_update_profile(
-    username: str, new_display_name: Optional[str], new_email: Optional[str], reset: Optional[bool] = False
+    username: str,
+    new_display_name: str | None,
+    new_email: str | None,
+    reset: bool | None = False,
 ) -> None:
-    if not supabase_client:
+    if not db_client_ctx:
         raise RuntimeError("Database not initialized")
     debug_log(
         f"DB: update_profile('{username}') -> name='{new_display_name}', email='{new_email}'"
@@ -94,7 +100,7 @@ async def db_update_profile(
     user = await db_get_user_by_username(username)
     if not user:
         raise ValueError("User not found for profile update.")
-    
+
     update_data = {}
     if new_display_name is not None:
         update_data["display_name"] = new_display_name
@@ -110,7 +116,8 @@ async def db_update_profile(
 
     try:
         await asyncio.to_thread(
-            supabase_client.table("users")
+            db_client_ctx.get()
+            .table("users")
             .update(update_data)
             .eq("id", user["id"])
             .execute
@@ -120,8 +127,8 @@ async def db_update_profile(
         raise e
 
 
-async def db_get_profile_stats(username: str) -> Dict[str, Any]:
-    if not supabase_client:
+async def db_get_profile_stats(username: str) -> dict[str, Any]:
+    if not db_client_ctx:
         raise RuntimeError("Database not initialized")
     debug_log(f"DB: get_profile_stats('{username}')")
     user = await db_get_user_by_username(username)
@@ -131,19 +138,22 @@ async def db_get_profile_stats(username: str) -> Dict[str, Any]:
     try:
         tasks = [
             asyncio.to_thread(
-                supabase_client.table("posts")
+                db_client_ctx.get()
+                .table("posts")
                 .select("id", count="exact")
                 .eq("user_id", user["id"])
                 .execute
             ),
             asyncio.to_thread(
-                supabase_client.table("follows")
+                db_client_ctx.get()
+                .table("follows")
                 .select("follower_id", count="exact")
                 .eq("follower_id", user["id"])
                 .execute
             ),
             asyncio.to_thread(
-                supabase_client.table("follows")
+                db_client_ctx.get()
+                .table("follows")
                 .select("following_id", count="exact")
                 .eq("following_id", user["id"])
                 .execute
@@ -169,7 +179,7 @@ async def db_get_profile_stats(username: str) -> Dict[str, Any]:
 
 
 async def db_is_following(follower_username: str, following_username: str) -> bool:
-    if not supabase_client:
+    if not db_client_ctx:
         raise RuntimeError("Database not initialized")
     debug_log(f"DB: is_following('{follower_username}', '{following_username}')")
     follower = await db_get_user_by_username(follower_username)
@@ -178,7 +188,8 @@ async def db_is_following(follower_username: str, following_username: str) -> bo
         return False
     try:
         resp = await asyncio.to_thread(
-            supabase_client.table("follows")
+            db_client_ctx.get()
+            .table("follows")
             .select("follower_id", count="exact")
             .eq("follower_id", follower["id"])
             .eq("following_id", following["id"])
@@ -195,7 +206,7 @@ async def db_is_following(follower_username: str, following_username: str) -> bo
 
 
 async def db_follow_user(current_username: str, target_username_to_follow: str) -> None:
-    if not supabase_client:
+    if not db_client_ctx:
         raise RuntimeError("Database not initialized")
     debug_log(f"DB: follow_user('{current_username}', '{target_username_to_follow}')")
     user = await db_get_user_by_username(current_username)
@@ -210,7 +221,8 @@ async def db_follow_user(current_username: str, target_username_to_follow: str) 
 
     try:
         await asyncio.to_thread(
-            supabase_client.table("follows")
+            db_client_ctx.get()
+            .table("follows")
             .insert({"follower_id": user["id"], "following_id": target["id"]})
             .execute
         )
@@ -222,7 +234,7 @@ async def db_follow_user(current_username: str, target_username_to_follow: str) 
 async def db_unfollow_user(
     current_username: str, target_username_to_unfollow: str
 ) -> None:
-    if not supabase_client:
+    if not db_client_ctx:
         raise RuntimeError("Database not initialized")
     debug_log(
         f"DB: unfollow_user('{current_username}', '{target_username_to_unfollow}')"
@@ -241,7 +253,8 @@ async def db_unfollow_user(
 
     try:
         await asyncio.to_thread(
-            supabase_client.table("follows")
+            db_client_ctx.get()
+            .table("follows")
             .delete()
             .match({"follower_id": user["id"], "following_id": target["id"]})
             .execute
@@ -252,7 +265,7 @@ async def db_unfollow_user(
 
 
 async def db_is_following_channel(username: str, channel_tag: str) -> bool:
-    if not supabase_client:
+    if not db_client_ctx:
         raise RuntimeError("Database not initialized")
     channel_tag_lower = channel_tag.lower()
     debug_log(f"DB: is_following_channel('{username}', '#{channel_tag_lower}')")
@@ -261,7 +274,8 @@ async def db_is_following_channel(username: str, channel_tag: str) -> bool:
         return False
     try:
         resp = await asyncio.to_thread(
-            supabase_client.table("user_channel_follows")
+            db_client_ctx.get()
+            .table("user_channel_follows")
             .select("user_id", count="exact")
             .eq("user_id", user["id"])
             .eq("channel_tag", channel_tag_lower)
@@ -278,7 +292,7 @@ async def db_is_following_channel(username: str, channel_tag: str) -> bool:
 
 
 async def db_follow_channel(current_username: str, channel_tag: str) -> None:
-    if not supabase_client:
+    if not db_client_ctx:
         raise RuntimeError("Database not initialized")
     channel_tag_lower = channel_tag.lower()
     debug_log(f"DB: follow_channel('{current_username}', '#{channel_tag_lower}')")
@@ -293,7 +307,8 @@ async def db_follow_channel(current_username: str, channel_tag: str) -> None:
 
     try:
         await asyncio.to_thread(
-            supabase_client.table("user_channel_follows")
+            db_client_ctx.get()
+            .table("user_channel_follows")
             .insert({"user_id": user["id"], "channel_tag": channel_tag_lower})
             .execute
         )
@@ -307,7 +322,7 @@ async def db_follow_channel(current_username: str, channel_tag: str) -> None:
 
 
 async def db_unfollow_channel(current_username: str, channel_tag: str) -> None:
-    if not supabase_client:
+    if not db_client_ctx:
         raise RuntimeError("Database not initialized")
     channel_tag_lower = channel_tag.lower()
     debug_log(f"DB: unfollow_channel('{current_username}', '#{channel_tag_lower}')")
@@ -320,7 +335,8 @@ async def db_unfollow_channel(current_username: str, channel_tag: str) -> None:
 
     try:
         await asyncio.to_thread(
-            supabase_client.table("user_channel_follows")
+            db_client_ctx.get()
+            .table("user_channel_follows")
             .delete()
             .match({"user_id": user["id"], "channel_tag": channel_tag_lower})
             .execute
@@ -332,7 +348,7 @@ async def db_unfollow_channel(current_username: str, channel_tag: str) -> None:
 
 # --- Ignore Operations ---
 async def db_is_ignoring(ignorer_username: str, ignored_username: str) -> bool:
-    if not supabase_client:
+    if not db_client_ctx:
         raise RuntimeError("Database not initialized")
     debug_log(f"DB: is_ignoring('{ignorer_username}', '{ignored_username}')")
     ignorer = await db_get_user_by_username(ignorer_username)
@@ -341,7 +357,8 @@ async def db_is_ignoring(ignorer_username: str, ignored_username: str) -> bool:
         return False
     try:
         resp = await asyncio.to_thread(
-            supabase_client.table("ignored_users")
+            db_client_ctx.get()
+            .table("ignored_users")
             .select("ignorer_id", count="exact")
             .eq("ignorer_id", ignorer["id"])
             .eq("ignored_user_id", ignored["id"])
@@ -358,7 +375,7 @@ async def db_is_ignoring(ignorer_username: str, ignored_username: str) -> bool:
 
 
 async def db_ignore_user(current_username: str, target_username_to_ignore: str) -> None:
-    if not supabase_client:
+    if not db_client_ctx:
         raise RuntimeError("Database not initialized")
     debug_log(f"DB: ignore_user('{current_username}', '{target_username_to_ignore}')")
 
@@ -374,7 +391,8 @@ async def db_ignore_user(current_username: str, target_username_to_ignore: str) 
 
     try:
         await asyncio.to_thread(
-            supabase_client.table("ignored_users")
+            db_client_ctx.get()
+            .table("ignored_users")
             .insert({"ignorer_id": user["id"], "ignored_user_id": target["id"]})
             .execute
         )
@@ -390,7 +408,7 @@ async def db_ignore_user(current_username: str, target_username_to_ignore: str) 
 async def db_unignore_user(
     current_username: str, target_username_to_unignore: str
 ) -> None:
-    if not supabase_client:
+    if not db_client_ctx:
         raise RuntimeError("Database not initialized")
     debug_log(
         f"DB: unignore_user('{current_username}', '{target_username_to_unignore}')"
@@ -405,7 +423,8 @@ async def db_unignore_user(
 
     try:
         await asyncio.to_thread(
-            supabase_client.table("ignored_users")
+            db_client_ctx.get()
+            .table("ignored_users")
             .delete()
             .match({"ignorer_id": user["id"], "ignored_user_id": target["id"]})
             .execute
@@ -415,8 +434,8 @@ async def db_unignore_user(
         raise e
 
 
-async def db_get_ignored_user_ids(username: str) -> List[str]:
-    if not supabase_client:
+async def db_get_ignored_user_ids(username: str) -> list[str]:
+    if not db_client_ctx:
         raise RuntimeError("Database not initialized")
     user = await db_get_user_by_username(username)
     if not user:
@@ -424,7 +443,8 @@ async def db_get_ignored_user_ids(username: str) -> List[str]:
 
     try:
         resp = await asyncio.to_thread(
-            supabase_client.table("ignored_users")
+            db_client_ctx.get()
+            .table("ignored_users")
             .select("ignored_user_id")
             .eq("ignorer_id", user["id"])
             .execute
@@ -436,9 +456,9 @@ async def db_get_ignored_user_ids(username: str) -> List[str]:
 
 
 # --- RPC-based list functions ---
-async def db_get_user_following(current_username: str) -> List[Dict[str, Any]]:
+async def db_get_user_following(current_username: str) -> list[dict[str, Any]]:
     """Gets a list of users the current_username is following."""
-    if not supabase_client:
+    if not db_client_ctx:
         raise RuntimeError("Database not initialized")
     debug_log(f"DB: db_get_user_following for '{current_username}'")
     user = await db_get_user_by_username(current_username)
@@ -451,21 +471,21 @@ async def db_get_user_following(current_username: str) -> List[Dict[str, Any]]:
 
     try:
         resp = await asyncio.to_thread(
-            supabase_client.rpc(
-                "get_user_following", {"input_user_id": user_uuid}
-            ).execute
+            db_client_ctx.get()
+            .rpc("get_user_following", {"input_user_id": user_uuid})
+            .execute
         )
         return resp.data if resp.data else []
     except Exception as e:
         debug_log(f"[DB ERROR] db_get_user_following for {current_username}: {e}")
-        if ITTER_DEBUG_MODE:
+        if config.itter_debug_mode:
             debug_log(traceback.format_exc())
         return []
 
 
-async def db_get_user_followers(current_username: str) -> List[Dict[str, Any]]:
+async def db_get_user_followers(current_username: str) -> list[dict[str, Any]]:
     """Gets a list of users following the current_username."""
-    if not supabase_client:
+    if not db_client_ctx:
         raise RuntimeError("Database not initialized")
     debug_log(f"DB: db_get_user_followers for '{current_username}'")
     user = await db_get_user_by_username(current_username)
@@ -478,21 +498,21 @@ async def db_get_user_followers(current_username: str) -> List[Dict[str, Any]]:
 
     try:
         resp = await asyncio.to_thread(
-            supabase_client.rpc(
-                "get_user_followers", {"input_user_id": user_uuid}
-            ).execute
+            db_client_ctx.get()
+            .rpc("get_user_followers", {"input_user_id": user_uuid})
+            .execute
         )
         return resp.data if resp.data else []
     except Exception as e:
         debug_log(f"[DB ERROR] db_get_user_followers for {current_username}: {e}")
-        if ITTER_DEBUG_MODE:
+        if config.itter_debug_mode:
             debug_log(traceback.format_exc())
         return []
 
 
-async def db_get_user_ignoring(current_username: str) -> List[Dict[str, Any]]:
+async def db_get_user_ignoring(current_username: str) -> list[dict[str, Any]]:
     """Gets a list of users the current_username is ignoring."""
-    if not supabase_client:
+    if not db_client_ctx:
         raise RuntimeError("Database not initialized")
     debug_log(f"DB: db_get_user_ignoring for '{current_username}'")
     user = await db_get_user_by_username(current_username)
@@ -505,21 +525,21 @@ async def db_get_user_ignoring(current_username: str) -> List[Dict[str, Any]]:
 
     try:
         resp = await asyncio.to_thread(
-            supabase_client.rpc(
-                "get_user_ignoring", {"input_user_id": user_uuid}
-            ).execute
+            db_client_ctx.get()
+            .rpc("get_user_ignoring", {"input_user_id": user_uuid})
+            .execute
         )
         return resp.data if resp.data else []
     except Exception as e:
         debug_log(f"[DB ERROR] db_get_user_ignoring for {current_username}: {e}")
-        if ITTER_DEBUG_MODE:
+        if config.itter_debug_mode:
             debug_log(traceback.format_exc())
         return []
 
 
-async def db_get_user_following_channels(current_username: str) -> List[Dict[str, Any]]:
+async def db_get_user_following_channels(current_username: str) -> list[dict[str, Any]]:
     """Gets a list of channels the current_username is following."""
-    if not supabase_client:
+    if not db_client_ctx:
         raise RuntimeError("Database not initialized")
     debug_log(f"DB: db_get_user_following_channels for '{current_username}'")
     user = await db_get_user_by_username(current_username)
@@ -534,16 +554,16 @@ async def db_get_user_following_channels(current_username: str) -> List[Dict[str
         # This RPC needs to be created in Supabase:
         # SQL: SELECT lower(channel_tag) as channel_tag, created_at FROM user_channel_follows WHERE user_id = input_user_id ORDER BY created_at DESC;
         resp = await asyncio.to_thread(
-            supabase_client.rpc(
-                "get_user_following_channels", {"input_user_id": user_uuid}
-            ).execute
+            db_client_ctx.get()
+            .rpc("get_user_following_channels", {"input_user_id": user_uuid})
+            .execute
         )
         return resp.data if resp.data else []
     except Exception as e:
         debug_log(
             f"[DB ERROR] db_get_user_following_channels for {current_username}: {e}"
         )
-        if ITTER_DEBUG_MODE:
+        if config.itter_debug_mode:
             debug_log(traceback.format_exc())
         return []
 
@@ -552,17 +572,17 @@ async def db_get_user_following_channels(current_username: str) -> List[Dict[str
 async def db_post_eet(
     username: str,
     content: str,
-    tags: List[str],
-    mentions: List[str],
-    client_ip: Optional[str] = None,
+    tags: list[str],
+    mentions: list[str],
+    client_ip: str | None = None,
 ) -> None:
-    if not supabase_client:
+    if not db_client_ctx:
         raise RuntimeError("Database not initialized")
     debug_log(
         f"DB: post_eet('{username}') -> tags={tags}, mentions={mentions}, client_ip={client_ip}"
     )
-    if len(content) > EET_MAX_LENGTH:
-        raise ValueError(f"Eet too long (max {EET_MAX_LENGTH} chars).")
+    if len(content) > config.eet_max_length:
+        raise ValueError(f"Eet too long (max {config.eet_max_length} chars).")
 
     user = await db_get_user_by_username(username)
     if not user:
@@ -594,9 +614,7 @@ async def db_post_eet(
 
     try:
         await asyncio.to_thread(
-            supabase_client.table("posts")
-            .insert(post_data)
-            .execute
+            db_client_ctx.get().table("posts").insert(post_data).execute
         )
     except Exception as e:
         debug_log(f"[DB ERROR] db_post_eet: {e}")
@@ -605,11 +623,11 @@ async def db_post_eet(
 
 async def db_get_filtered_timeline_posts(
     current_username: str,
-    target_filter: Dict[str, Any],
+    target_filter: dict[str, Any],
     page: int = 1,
-    page_size: int = DEFAULT_TIMELINE_PAGE_SIZE,
-) -> List[Dict[str, Any]]:
-    if not supabase_client:
+    page_size: int = config.default_timeline_page_size,
+) -> list[dict[str, Any]]:
+    if not db_client_ctx:
         raise RuntimeError("Database not initialized")
     debug_log(
         f"DB: get_filtered_timeline_posts via RPC ('{current_username}', {target_filter}, page={page})"
@@ -623,8 +641,8 @@ async def db_get_filtered_timeline_posts(
         return []
     user_uuid = user["id"]
 
-    rpc_name: Optional[str] = None
-    rpc_params: Dict[str, Any] = {
+    rpc_name: str | None = None
+    rpc_params: dict[str, Any] = {
         "input_user_id": user_uuid,
         "p_page": page,
         "p_page_size": page_size,
@@ -644,9 +662,7 @@ async def db_get_filtered_timeline_posts(
             )
             return []
         rpc_name = "get_channel_timeline"
-        rpc_params["p_channel_tag"] = (
-            filter_value.lower()
-        )
+        rpc_params["p_channel_tag"] = filter_value.lower()
     elif filter_type == "user":
         if not filter_value or not isinstance(filter_value, str):
             debug_log(
@@ -666,7 +682,7 @@ async def db_get_filtered_timeline_posts(
     try:
         debug_log(f"DB: Calling RPC '{rpc_name}' with params: {rpc_params}")
         resp = await asyncio.to_thread(
-            supabase_client.rpc(rpc_name, rpc_params).execute
+            db_client_ctx.get().rpc(rpc_name, rpc_params).execute
         )
         posts_data = resp.data or []
         debug_log(f"DB: RPC {rpc_name} returned {len(posts_data)} posts")
@@ -688,6 +704,6 @@ async def db_get_filtered_timeline_posts(
         debug_log(
             f"[DB ERROR] Calling RPC {rpc_name} for {current_username} with {target_filter}: {e}"
         )
-        if ITTER_DEBUG_MODE:
+        if config.itter_debug_mode:
             debug_log(traceback.format_exc())
         return []

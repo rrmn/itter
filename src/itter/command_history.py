@@ -2,6 +2,7 @@ from collections import deque
 
 MAX_HISTORY_SIZE = 10
 
+
 class CommandHistory:
     def __init__(self):
         self.history = deque(maxlen=MAX_HISTORY_SIZE)
