@@ -3,7 +3,7 @@ import logging
 import re
 import sys
 import textwrap
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, final
 
 import asyncssh
 
@@ -11,15 +11,8 @@ import asyncssh
 from itter import database as db
 from itter import utils
 from itter.command_history import CommandHistory
-from itter.context import config
-from itter.utils import (
-    BOLD,
-    FG_BRIGHT_BLACK,
-    RESET,
-    FG_CYAN,
-    FG_MAGENTA,
-    FG_BRIGHT_YELLOW,
-)
+from itter.context import active_sessions_ref_ctx, config
+from itter.utils import BOLD, FG_BRIGHT_BLACK, FG_CYAN, FG_MAGENTA, RESET
 
 logging.basicConfig(
     level=logging.DEBUG,
@@ -29,43 +22,43 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 # Global reference - will be set by main.py
 # Use forward reference for type hint to avoid circular import if needed later
-active_sessions_ref: dict[str, "ItterShell"] | None = None
 
 
-def init_ssh(sessions_dict: Dict[str, "ItterShell"]):  # <-- Update type hint
+def init_ssh(sessions_dict: dict[str, "ItterShell"]):  # <-- Update type hint
     """Initializes the SSH module with the active sessions reference."""
-    global active_sessions_ref
     active_sessions_ref = sessions_dict
-    utils.debug_log("SSH Server module initialized.")
+    active_sessions_ref_ctx.set(active_sessions_ref)
+    logger.debug("SSH Server module is initialized.")
 
 
+@final
 class ItterSSHServer(asyncssh.SSHServer):
     def __init__(self):
         self.is_registration_attempt = False
-        self.registration_username_candidate: Optional[str] = None
-        self.submitted_public_key: Optional[str] = None
-        self.current_username: Optional[str] = None
+        self.registration_username_candidate: str | None = None
+        self.submitted_public_key: str | None = None
+        self.current_username: str | None = None
         super().__init__()
 
     def connection_made(self, conn: asyncssh.SSHServerConnection) -> None:
-        utils.debug_log(
-            f"ItterSSHServer connection_made by {conn.get_extra_info('peername')}"
+        logger.debug(
+            "ItterSSHServer connection made by %s", conn.get_extra_info("peername")
         )
         self._conn = conn
 
-    def connection_lost(self, exc: Optional[Exception]) -> None:
+    def connection_lost(self, exc: Exception | None) -> None:
         utils.debug_log(f"ItterSSHServer connection_lost: {exc}")
         if (
             self.current_username
-            and active_sessions_ref is not None
-            and self.current_username in active_sessions_ref
+            and active_sessions_ref_ctx.get() is not None
+            and self.current_username in active_sessions_ref_ctx.get()
         ):
             utils.debug_log(
                 f"Removing session for {self.current_username} due to connection loss."
             )
             # Use try-except in case the session was already removed somehow
             try:
-                del active_sessions_ref[self.current_username]
+                del active_sessions_ref_ctx.get()[self.current_username]
             except KeyError:
                 utils.debug_log(f"Session for {self.current_username} already removed.")
         self.current_username = None
@@ -184,75 +177,75 @@ class ItterSSHServer(asyncssh.SSHServer):
         )
         try:
             self.submitted_public_key = key.export_public_key().decode().strip()
-        except Exception as e:
-            utils.debug_log(f"Error exporting public key: {e}")
+        except Exception:
+            logger.exception("Error exporting public key")
             return False
 
         if self.is_registration_attempt:
             # For registration, registration_username_candidate should be set
             if not self.registration_username_candidate:
-                utils.debug_log(
+                logger.error(
                     f"[CRITICAL] validate_public_key: is_registration_attempt is True, but registration_username_candidate is None for '{username_from_auth_begin}'. This is an inconsistent state."
                 )
                 return False  # Safety break
-            utils.debug_log(
+            logger.debug(
                 f"Public key captured for registration of '{self.registration_username_candidate}' (original user in auth: '{username_from_auth_begin}'). Returning True."
             )
             return True
 
         # Not a registration attempt (self.is_registration_attempt is False)
         if not self.current_username:
-            utils.debug_log(
+            logger.debug(
                 f"Public key validation attempted for '{username_from_auth_begin}' but self.current_username is None and not a registration attempt. Returning False."
             )
             return False
 
         # This must be a login attempt, self.current_username should match username_from_auth_begin (or be derived)
         if self.current_username != username_from_auth_begin:
-            utils.debug_log(
+            logger.warning(
                 f"[WARNING] validate_public_key: username_from_auth_begin ('{username_from_auth_begin}') differs from self.current_username ('{self.current_username}') in login flow."
             )
             # This might indicate an issue if they are expected to be same. For now, proceed with self.current_username.
 
         user_obj = await db.db_get_user_by_username(self.current_username)
         if not user_obj or "public_key" not in user_obj or not user_obj["public_key"]:
-            utils.debug_log(
+            logger.debug(
                 f"User '{self.current_username}' (for '{username_from_auth_begin}') not found or has no public key. Returning False."
             )
             return False
 
         stored_key = user_obj["public_key"].strip()
         is_valid = stored_key == self.submitted_public_key
-        utils.debug_log(
+        logger.debug(
             f"Key validation for login user '{self.current_username}' (for '{username_from_auth_begin}'): {'Success' if is_valid else 'Failure'}. Returning {is_valid}."
         )
         return is_valid
 
     def session_requested(
         self,
-    ) -> Optional["ItterShell"]:  # Return type can be Optional
-        utils.debug_log(
+    ):
+        logger.debug(
             f"session_requested called. Server state: is_registration_attempt={self.is_registration_attempt}, current_username='{self.current_username}', registration_candidate='{self.registration_username_candidate}'"
         )
 
-        shell_to_return: Optional[ItterShell] = None
+        shell_to_return: ItterShell | None = None
 
         if self.is_registration_attempt:
             if self.registration_username_candidate and self.submitted_public_key:
-                utils.debug_log(
+                logger.debug(
                     f"Creating ItterShell for REGISTRATION of '{self.registration_username_candidate}'"
                 )
                 shell_to_return = ItterShell(
                     ssh_server_ref=self,
-                    initial_username=None,
                     is_registration_flow=True,
+                    initial_username=None,
                     registration_details=(
                         self.registration_username_candidate,
                         self.submitted_public_key,
                     ),
                 )
             else:
-                utils.debug_log(
+                logger.error(
                     f"[CRITICAL] session_requested: In registration flow but registration_username_candidate ('{self.registration_username_candidate}') or submitted_public_key is missing. Refusing session."
                 )
                 # self._conn.send_auth_banner("Registration process incomplete. Please try again.\r\n") # Optional
@@ -262,9 +255,7 @@ class ItterSSHServer(asyncssh.SSHServer):
         elif (
             self.current_username
         ):  # This implies not a registration attempt, but a login
-            utils.debug_log(
-                f"Creating ItterShell for LOGIN of '{self.current_username}'"
-            )
+            logger.debug(f"Creating ItterShell for LOGIN of '{self.current_username}'")
             shell_to_return = ItterShell(
                 ssh_server_ref=self,
                 initial_username=self.current_username,
@@ -275,17 +266,17 @@ class ItterSSHServer(asyncssh.SSHServer):
             # This is the problematic state: no registration, no current_username.
             # This means begin_auth likely failed or didn't establish a user,
             # but other auth (e.g. public key without specific user context) passed.
-            utils.debug_log(
+            logger.error(
                 "[CRITICAL] session_requested: No valid user context (not registration, no current_username). Refusing session."
             )
             # self._conn.send_auth_banner("Authentication failed to establish user context. Please try again.\r\n") # Optional
             # self._conn.disconnect(...) # Optional
             return None  # Refuse session
 
-        if shell_to_return and active_sessions_ref is not None:
-            shell_to_return.set_active_sessions_ref(active_sessions_ref)
-        elif shell_to_return and active_sessions_ref is None:
-            utils.debug_log(
+        if shell_to_return and active_sessions_ref_ctx.get() is not None:
+            shell_to_return.set_active_sessions_ref(active_sessions_ref_ctx.get())
+        elif shell_to_return and active_sessions_ref_ctx.get() is None:
+            logger.warning(
                 "WARNING: active_sessions_ref is None when creating ItterShell! Shell will be created but may lack full functionality."
             )
 
@@ -296,37 +287,37 @@ class ItterShell(asyncssh.SSHServerSession):
     def __init__(
         self,
         ssh_server_ref: ItterSSHServer,
-        initial_username: Optional[str],
         is_registration_flow: bool,
-        registration_details: Optional[Tuple[str, str]],
+        initial_username: str | None = None,
+        registration_details: tuple[str, str] | None = None,
     ):
         self._ssh_server = ssh_server_ref
-        self.username: Optional[str] = initial_username
+        self.username: str | None = initial_username
         self._is_registration_flow = is_registration_flow
         if self._is_registration_flow and registration_details:
             self._reg_username_candidate, self._reg_public_key = registration_details
         else:
             self._reg_username_candidate, self._reg_public_key = None, None
 
-        self._chan: Optional[asyncssh.SSHServerChannel] = None
-        self._current_target_filter: Dict[str, Optional[str]] = {
+        self._chan: asyncssh.SSHServerChannel | None = None
+        self._current_target_filter: dict[str, Any] = {
             "type": "all",
             "value": None,
         }
         self._is_watching_timeline = False
-        self._timeline_auto_refresh_task: Optional[asyncio.Task] = None
+        self._timeline_auto_refresh_task: asyncio.Task | None = None
         self._current_timeline_page = 1
         self._term_width = 80
         self._term_height = 24
         self._input_buffer = ""
         self._command_history = CommandHistory()
-        self._active_sessions: Optional[Dict[str, "ItterShell"]] = (
+        self._active_sessions: dict[str, "ItterShell"] | None = (
             None  # Use forward reference
         )
-        self._client_ip: Optional[str] = None
+        self._client_ip: str | None = None
 
         self._timeline_page_size = config.default_timeline_page_size
-        self._last_timeline_eets_count: Optional[int] = None  # For PgUp/PgDn context
+        self._last_timeline_eets_count: int | None = None  # For PgUp/PgDn context
 
         try:
             with open(config.banner_file, "r") as f:
@@ -337,7 +328,7 @@ class ItterShell(asyncssh.SSHServerSession):
         super().__init__()
 
     # Method to receive the active sessions reference from the factory
-    def set_active_sessions_ref(self, sessions_dict: Dict[str, "ItterShell"]):
+    def set_active_sessions_ref(self, sessions_dict: dict[str, "ItterShell"]):
         self._active_sessions = sessions_dict
 
     def _write_to_channel(self, message: str = "", newline: bool = True):
@@ -1067,7 +1058,7 @@ class ItterShell(asyncssh.SSHServerSession):
         if self._chan and not self._is_watching_timeline:
             self._prompt()
 
-    async def _handle_profile_command(self, raw_text: str, user_refs: List[str]):
+    async def _handle_profile_command(self, raw_text: str, user_refs: list[str]):
         args = raw_text.split()
         if args and (args[0].lower() == "edit" or args[0].lower() == "e"):
             new_display_name = None
@@ -1244,7 +1235,7 @@ class ItterShell(asyncssh.SSHServerSession):
         # For non-live (manual timeline command), the prompt will be added by _handle_command_line
         # *unless* this was called from a PgUp/PgDn handler, in which case prompt is handled there.
 
-    def _format_timeline_output(self, eets: List[Dict[str, Any]], page: int) -> str:
+    def _format_timeline_output(self, eets: list[dict[str, Any]], page: int) -> str:
         time_w = 12
         user_w = 20  # Max visual width for user column
         sep_w = 3
@@ -1412,7 +1403,7 @@ class ItterShell(asyncssh.SSHServerSession):
 
         return "\r\n".join(output_lines)
 
-    async def handle_new_post_realtime(self, post_record: Dict[str, Any]):
+    async def handle_new_post_realtime(self, post_record: dict[str, Any]):
         if not self._is_watching_timeline or not self.username:
             return
         utils.debug_log(f"RT check for {self.username}: Post {post_record.get('id')}")
@@ -1439,7 +1430,7 @@ class ItterShell(asyncssh.SSHServerSession):
             page=1, is_live_update=True
         )  # Refresh to page 1
 
-    def connection_lost(self, exc: Optional[Exception]) -> None:
+    def connection_lost(self, exc: Exception | None) -> None:
         utils.debug_log(
             f"ItterShell connection_lost for {self.username or 'REGISTRATION'}: {exc}"
         )
@@ -1472,7 +1463,7 @@ async def start_ssh_server(
     init_ssh(sessions_dict)
     logger.debug("Starting SSH server on %s:%s", config.ssh_host, config.ssh_port)
     try:
-        await asyncssh.create_server(
+        _ = await asyncssh.create_server(
             ItterSSHServer,
             config.ssh_host,
             config.ssh_port,
@@ -1480,8 +1471,10 @@ async def start_ssh_server(
             line_editor=False,  # We handle line editing
             # term_type='xterm-256color' # Can suggest a term type to client
         )
-        print(f"itter.sh server humming on ssh://{config.ssh_host}:{config.ssh_port}")
-        print("Ctrl+C to stop.")
+        logger.debug(
+            "itter.sh server humming on ssh://%s:%s", config.ssh_host, config.ssh_port
+        )
+        logger.info("Ctrl+C to stop.")
     except Exception as e:
         sys.stderr.write(f"[FATAL ERROR] SSH server failed to start: {e}\n")
         sys.exit(1)

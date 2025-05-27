@@ -5,7 +5,7 @@ import sys
 from typing import Dict, Any, Optional
 
 # Import from the actual library now that the name conflict is resolved
-from realtime import AsyncRealtimeClient, RealtimeSubscribeStates
+from realtime import RealtimeSubscribeStates
 from itter.utils import debug_log
 from itter.context import rt_client_ctx
 # Import the specific type hint for the shell if needed for type checking within this file
@@ -105,5 +105,5 @@ async def start_realtime():
     try:
         asyncio.create_task(rt_client_ctx.get().listen())
         logger.debug("Realtime listener started in background task.")
-    except Exception as ex:
+    except Exception:
         logger.exception("Realtime listen error; realtime features might be affected.")

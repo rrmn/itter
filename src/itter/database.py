@@ -3,7 +3,6 @@ import logging
 import traceback
 from typing import Any
 
-from supabase import Client
 
 from itter.context import config, db_client_ctx
 from itter.utils import debug_log, hash_ip

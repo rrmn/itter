@@ -9,5 +9,8 @@ from itter.config import Config
 
 _ = load_dotenv(Path(__file__).parent.parent.parent.joinpath(".env"))
 config: Config = Config()
-db_client_ctx: ContextVar[Client] = ContextVar("db_client")
-rt_client_ctx: ContextVar[AsyncRealtimeClient] = ContextVar("rt_client")
+db_client_ctx: ContextVar[Client] = ContextVar("db_client_ctx")
+rt_client_ctx: ContextVar[AsyncRealtimeClient] = ContextVar("rt_client_ctx")
+active_sessions_ref_ctx: ContextVar[dict[str, "ItterShell"]] = ContextVar(
+    "active_sessions_ref_ctx",
+)
