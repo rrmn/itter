@@ -4,19 +4,22 @@ import sys
 import traceback
 import typer
 from typing import Dict, Optional
-from supabase import create_client, Client  # Need Client for type hint
-from realtime import AsyncRealtimeClient  # Need this for type hint
+from supabase import create_client, Client
+from realtime import AsyncRealtimeClient
 
-# Import our refactored modules
 import config
 import utils
 import database
-import realtime_manager  # Use the renamed file
-import ssh_server
+import realtime_manager
+from ssh import ssh_server
+from ssh.shell import ItterShell
 
 # --- Global State ---
 # Use forward reference for ItterShell type hint
-active_sessions: Dict[str, "ssh_server.ItterShell"] = {}
+active_sessions: Dict[str, "ItterShell"] = {}
+
+# Use forward reference for type hint to avoid circular import if needed later
+active_sessions_ref: Optional[Dict[str, "ItterShell"]] = None
 
 
 # --- Initialization ---
@@ -37,9 +40,10 @@ def initialize_clients():
         utils.debug_log("Creating Realtime client...")
         # Ensure realtime client is created correctly
         rt_client = AsyncRealtimeClient(config.SUPABASE_WSURL, config.SUPABASE_KEY)
+        # Pass client and sessions dict
         realtime_manager.init_realtime(
             rt_client, active_sessions
-        )  # Pass client and sessions dict
+        )
         utils.debug_log(
             "Realtime client created and Realtime manager module initialized."
         )
@@ -53,10 +57,10 @@ async def main_server_loop():
     """Initializes and runs the main application components."""
     utils.debug_log("Starting main server loop...")
     # Start Realtime listener (connects, subscribes, and listens in background)
-    await realtime_manager.start_realtime()  # Use renamed module
-
+    await realtime_manager.start_realtime()
+    
     # Start SSH server (listens for connections)
-    await ssh_server.start_ssh_server(active_sessions)  # Pass sessions dict
+    await ssh_server.start_ssh_server(active_sessions)
 
     # Keep the main loop alive (Realtime listen runs in background)
     while True:
