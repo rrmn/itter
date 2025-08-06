@@ -4,7 +4,8 @@ from typing import TYPE_CHECKING
 
 import itter.data.database as db
 import itter.core.utils as utils
-from itter.core.utils import BOLD, RESET, FG_MAGENTA
+from itter.core.utils import BOLD, RESET, FG_CYAN, FG_RED, FG_BRIGHT_BLACK
+
 if TYPE_CHECKING:
     from itter.ssh.shell import ItterShell
 
@@ -15,7 +16,9 @@ async def display_ignore_list(shell: "ItterShell"):
     try:
         ignoring_list = await db.db_get_user_ignoring(shell.username)
     except Exception as e:
-        shell._write_to_channel(f"Error fetching ignore list: {e}")
+        shell._write_to_channel(
+            f"{FG_RED}Error:{RESET} Could not fetch ignore list: {e}"
+        )
         return
     output_lines = []
     output_lines.append(
@@ -23,7 +26,7 @@ async def display_ignore_list(shell: "ItterShell"):
     )
     if not ignoring_list:
         output_lines.append(
-            f"  Not ignoring anyone. What a saint! Use `{BOLD}ignore @user{RESET}` if needed."
+            f"  {FG_BRIGHT_BLACK}Not ignoring anyone. What a saint! Use `{BOLD}ignore @user{RESET}{FG_BRIGHT_BLACK}` if needed.{RESET}"
         )
     else:
         for user_data in ignoring_list:
@@ -34,7 +37,7 @@ async def display_ignore_list(shell: "ItterShell"):
             )
             time_part = f" - since {utils.time_ago(user_data.get('created_at'))}"
             output_lines.append(
-                f"  {FG_MAGENTA}@{user_data['username']}{RESET}{display_name_part}{time_part}"
+                f"  {FG_CYAN}@{user_data['username']}{RESET}{display_name_part}{time_part}"
             )
     output_lines.append("\r\n")
     shell._write_to_channel("\r\n".join(output_lines))
@@ -51,7 +54,7 @@ async def handle_ignore(shell: "ItterShell", raw_text: str):
         if not target_user_to_ignore or not re.match(
             r"^[a-zA-Z0-9_]{3,20}$", target_user_to_ignore
         ):
-            shell._write_to_channel("Invalid username format: '@username'.")
+            shell._write_to_channel(f"{FG_RED}Invalid username format.{RESET} Try using '{BOLD}@username'{RESET}.")
         elif target_user_to_ignore == shell.username:
             shell._write_to_channel(
                 "You cannot ignore yourself. (That's what my psychologist said)"
@@ -63,7 +66,7 @@ async def handle_ignore(shell: "ItterShell", raw_text: str):
             )
     else:
         shell._write_to_channel(
-            f"Usage: {BOLD}ignore @<user>{RESET} OR {BOLD}ignore --list{RESET}"
+            f"Usage: {BOLD}ignore @user{RESET} or {BOLD}ignore --list{RESET}"
         )
 
 
@@ -76,11 +79,11 @@ async def handle_unignore(shell: "ItterShell", raw_text: str):
         if not target_user_to_unignore or not re.match(
             r"^[a-zA-Z0-9_]{3,20}$", target_user_to_unignore
         ):
-            shell._write_to_channel("Invalid username format: '@username'.")
+            shell._write_to_channel(f"{FG_RED}Invalid username format.{RESET} Try using '{BOLD}@username{RESET}'.")
         else:
             await db.db_unignore_user(shell.username, target_user_to_unignore)
             shell._write_to_channel(
                 f"Okay, @{target_user_to_unignore} is forgiven and will no longer be ignored. You'll see their posts again."
             )
     else:
-        shell._write_to_channel(f"Usage: {BOLD}unignore @<user>{RESET}")
+        shell._write_to_channel(f"Usage: {BOLD}unignore @user{RESET}")

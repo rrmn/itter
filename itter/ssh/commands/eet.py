@@ -4,6 +4,8 @@ from typing import TYPE_CHECKING, List
 import itter.data.database as db
 import itter.core.utils as utils
 import itter.core.config as config
+from itter.core.utils import BOLD, RESET, FG_RED
+
 if TYPE_CHECKING:
     from itter.ssh.shell import ItterShell
 
@@ -19,9 +21,13 @@ async def handle_eet(
         return
     content = content.strip()
     if not content:
-        shell._write_to_channel("Usage: eet <text>")
+        shell._write_to_channel(
+            f"Usage: {BOLD}eet <text>{RESET}"
+        )
     elif len(content) > config.EET_MAX_LENGTH:
-        shell._write_to_channel(f"ERROR: Eet too long! Max {config.EET_MAX_LENGTH}.")
+        shell._write_to_channel(
+            f"{FG_RED}Whoa there!{RESET} Eets are short & sweet. Max {config.EET_MAX_LENGTH} characters."
+        )
     else:
         await db.db_post_eet(
             shell.username,

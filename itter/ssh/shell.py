@@ -19,7 +19,7 @@ from itter.ssh.commands import (
     settings as settings_cmd,
     misc as misc_cmd,
 )
-from itter.core.utils import BOLD, RESET, FG_BRIGHT_BLACK
+from itter.core.utils import BOLD, RESET, FG_BRIGHT_BLACK, FG_RED
 
 
 class ItterShell(asyncssh.SSHServerSession):
@@ -67,7 +67,7 @@ class ItterShell(asyncssh.SSHServerSession):
             with open(config.BANNER_FILE, "r") as f:
                 self._banner_text = f.read()
         except FileNotFoundError:
-            self._banner_text = "Welcome to itter.sh!\n(Banner file not found)"
+            self._banner_text = "Welcome to itter.sh!\n(Banner file missing. You get this minimalist experience.)"
         super().__init__()
 
     def set_active_sessions_ref(self, sessions_dict: Dict[str, "ItterShell"]):
@@ -157,11 +157,13 @@ class ItterShell(asyncssh.SSHServerSession):
                 misc_cmd.show_help(self)
                 self._prompt()
             elif not self.username:
-                self._write_to_channel("ERROR: Login session started without username.")
+                self._write_to_channel(
+                    f"\r\n{FG_RED}Error:{RESET} Login session started without a username. Closing connection."
+                )
                 self.close()
             else:
                 self._write_to_channel(
-                    "ERROR: Server state error (active_sessions not set)."
+                    f"\r\n{FG_RED}Error:{RESET} Server state is inconsistent (active_sessions not set). Please try again in a moment."
                 )
                 utils.debug_log(
                     "CRITICAL: _active_sessions is None in ItterShell connection_made"
@@ -172,21 +174,22 @@ class ItterShell(asyncssh.SSHServerSession):
         utils.debug_log(f"Finalizing registration for '{self._reg_username_candidate}'")
         if not self._reg_username_candidate or not self._reg_public_key:
             self._write_to_channel(
-                "ERROR: Registration Error: Missing username or public key."
+                f"\r\n{FG_RED}Registration Error:{RESET} Missing username or public key. Can't create an account from nothing. Connection closed."
             )
             self.close()
             return
         try:
             await db.db_create_user(self._reg_username_candidate, self._reg_public_key)
             success_msg = (
-                f"\r\nRegistration successful as user '{self._reg_username_candidate}'!\r\n"
+                f"\r\nSuccess! Account '{self._reg_username_candidate}' created.\r\n"
                 f"You can now log in via:\r\n"
                 f"\r\n"
                 f"  > {BOLD}ssh {self._reg_username_candidate}@app.itter.sh{RESET}\r\n"
                 f"\r\n"
-                f"or {BOLD}ssh{RESET} {FG_BRIGHT_BLACK}-i /path/to/your/private_key{RESET} {BOLD}{self._reg_username_candidate}@app.itter.sh{RESET}"
-                f"\r\n"
-                f"Have fun & see you on the other side!\r\n"
+                f"Or if you switch between multiple keys:\r\n"
+                f"  > {BOLD}ssh{RESET} {FG_BRIGHT_BLACK}-i /path/to/your/private_key{RESET} {BOLD}{self._reg_username_candidate}@app.itter.sh{RESET}"
+                f"\r\n\r\n"
+                f"Have fun & see you on the other side!"
                 f"\r\n"
             )
             self._write_to_channel(success_msg)
@@ -197,7 +200,9 @@ class ItterShell(asyncssh.SSHServerSession):
             utils.debug_log(
                 f"[DB ERROR] Registration failed for '{self._reg_username_candidate}': {e}"
             )
-            self._write_to_channel(f"ERROR: Registration failed. Details: {e}")
+            self._write_to_channel(
+                f"\r\n{FG_RED}Registration Failed:{RESET} Could not create the account. The username may be taken or we screwed up somehow."
+            )
         finally:
             self.close()
 
@@ -265,9 +270,10 @@ class ItterShell(asyncssh.SSHServerSession):
                                 self, timeline_page_to_fetch=self._current_timeline_page
                             )
                         )
-                    else:  # Already at first page of timeline
+                    else:  # Already at first page of watch timeline
                         self._write_to_channel(
-                            "\r\nAlready at the first page of timeline.", newline=True
+                            f"\r\n{FG_BRIGHT_BLACK}You cannot move faster than time (yet).{RESET}",
+                            newline=True,
                         )
                         self._redraw_prompt_and_buffer()
                     return
@@ -285,7 +291,8 @@ class ItterShell(asyncssh.SSHServerSession):
                         )  # is_live_update is False
                     else:
                         self._write_to_channel(
-                            "\r\nAlready at the first page.", newline=True
+                            f"\r\n{FG_BRIGHT_BLACK}Already at the beginning of time(line). The only way is down.{RESET}",
+                            newline=True,
                         )
                         self._prompt()  # Redraw prompt for static timeline
                     return
@@ -304,7 +311,7 @@ class ItterShell(asyncssh.SSHServerSession):
                         )
                     else:
                         self._write_to_channel(
-                            "\r\nAlready at the last page of timeline or no more items.",
+                            f"\r\n{FG_BRIGHT_BLACK}I'm afraid that I don't see a thing. Just...silence.{RESET}",
                             newline=True,
                         )
                         self._redraw_prompt_and_buffer()
@@ -324,7 +331,7 @@ class ItterShell(asyncssh.SSHServerSession):
                         )
                     else:
                         self._write_to_channel(
-                            "\r\nAlready at the last page or no more items.",
+                            f"\r\n{FG_BRIGHT_BLACK}End of the line. No more eets to show (for now).{RESET}",
                             newline=True,
                         )
                         self._prompt()
@@ -445,7 +452,9 @@ class ItterShell(asyncssh.SSHServerSession):
 
     async def _handle_command_line(self, line: str):
         if not self.username and not self._is_registration_flow:
-            self._write_to_channel("ERROR: Critical error: No user context.")
+            self._write_to_channel(
+                f"{FG_RED}Critical Error:{RESET} No user context for command. Closing connection."
+            )
             self.close()
             return
         cmd, raw_text_full, hashtags_in_full_line, user_refs_in_full_line = (
@@ -486,6 +495,9 @@ class ItterShell(asyncssh.SSHServerSession):
                     self, raw_text_full, user_refs_in_full_line
                 )
             elif cmd == "settings" or cmd == "s":
+                # If arguments are provided, a setting is being changed. Clear screen first.
+                if raw_text_full.strip():
+                    self._clear_screen()
                 await settings_cmd.handle_settings(self, raw_text_full)
             elif cmd == "help" or cmd == "h":
                 await misc_cmd.handle_help(self)
@@ -496,12 +508,16 @@ class ItterShell(asyncssh.SSHServerSession):
                 await misc_cmd.handle_exit_command(self)
                 return
             else:
-                self._write_to_channel(f"Sorry, unknown command: '{FG_BRIGHT_BLACK}{cmd}{RESET}'. Type '{FG_BRIGHT_BLACK}help{RESET}' to see what's possible.")
+                self._write_to_channel(
+                    f"Sorry, unknown command: '{FG_BRIGHT_BLACK}{cmd}{RESET}'. Are you making stuff up? Try '{FG_BRIGHT_BLACK}help{RESET}' to see what's possible."
+                )
         except ValueError as ve:
-            self._write_to_channel(f"Error: {ve}")
+            self._write_to_channel(f"{FG_RED}Error:{RESET} {ve}")
         except Exception as e:
             utils.debug_log(f"Error handling command '{cmd}': {e}")
-            self._write_to_channel("An unexpected server error occurred.")
+            self._write_to_channel(
+                f"\r\n{FG_RED}An unexpected server error occurred.{RESET} My apologies. I'll give a wedgie to the developer for that."
+            )
             if config.ITTER_DEBUG_MODE:
                 import traceback
 

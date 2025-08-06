@@ -13,6 +13,7 @@ from itter.core.utils import (
     FG_BRIGHT_BLACK,
     FG_BRIGHT_YELLOW,
     FG_GREEN,
+    FG_RED,
 )
 
 if TYPE_CHECKING:
@@ -36,7 +37,7 @@ async def handle_timeline_and_watch(shell: "ItterShell", cmd: str, raw_text: str
             }
         else:
             shell._write_to_channel(
-                f"Invalid user format: '{target_specifier_text}'. Defaulting to 'all'."
+                f"{FG_RED}Invalid user format:{RESET} '{target_specifier_text}'. Defaulting to 'all'."
             )
             shell._current_target_filter = {"type": "all", "value": None}
     elif target_specifier_text.startswith("#"):
@@ -48,7 +49,7 @@ async def handle_timeline_and_watch(shell: "ItterShell", cmd: str, raw_text: str
             }
         else:
             shell._write_to_channel(
-                f"Invalid channel format: '{target_specifier_text}'. Defaulting to 'all'."
+                f"{FG_RED}Invalid channel format:{RESET} '{target_specifier_text}'. Defaulting to 'all'."
             )
             shell._current_target_filter = {"type": "all", "value": None}
     else:
@@ -110,7 +111,9 @@ async def timeline_refresh_loop(shell: "ItterShell"):
         utils.debug_log(f"Error in timeline refresh loop: {e}")
         if shell._is_watching_timeline and shell._chan:
             shell._clear_screen()
-            shell._write_to_channel(f"ERROR: Live timeline update error: {e}\r\n")
+            shell._write_to_channel(
+                f"{FG_RED}ERROR:{RESET} Live timeline update failed: {e}\r\n"
+            )
             shell._redraw_prompt_and_buffer()
 
 
@@ -140,7 +143,7 @@ async def render_and_display_timeline(
             shell._current_timeline_page = page
             shell._last_timeline_eets_count = len(eets)
         except Exception as e:
-            error_message = f"Timeline Error: {e}"
+            error_message = f"{FG_RED}Timeline Error:{RESET} {e}"
             if shell._chan:
                 shell._write_to_channel(error_message)
             return
@@ -184,9 +187,9 @@ def _format_timeline_output(
     )
     if not eets:
         output_lines.append(
-            " No eets found."
+            f" {FG_BRIGHT_BLACK}No eets found.{RESET}"
             if page == 1
-            else f" End of timeline for {timeline_title}."
+            else f" {FG_BRIGHT_BLACK}End of timeline. Nothing more to see.{RESET}"
         )
     else:
         for eet in eets:
@@ -263,15 +266,17 @@ def _format_timeline_output(
     footer = ""
     if not eets and page > 1:
         if page > 1:
-            footer = f"No more eets on page {page}. Type `{base_command_str} {page - 1}` for previous."
+            footer = f"No more eets on page {page}. Try `{base_command_str} {page - 1}` for previous."
     elif len(eets) >= shell._timeline_page_size:
         if page > 1:
-            footer = f"Type `{base_command_str} {page + 1}` for more, or `{base_command_str} {page - 1}` for previous."
+            footer = f"Type `{base_command_str} {page + 1}` for next, or `{base_command_str} {page - 1}` for previous."
         else:
-            footer = f"Type `{base_command_str} {page + 1}` for more."
+            footer = f"Type `{base_command_str} {page + 1}` for next page."
     elif eets:
         if page > 1:
-            footer = f"End of results on page {page}. Type `{base_command_str} {page - 1}` for previous."
+            footer = (
+                f"End of results. Type `{base_command_str} {page - 1}` for previous."
+            )
     if footer:
         footer_lines.append(footer)
     if footer_lines:
@@ -305,7 +310,7 @@ async def refresh_watch_display(shell: "ItterShell", timeline_page_to_fetch: int
         shell._redraw_prompt_and_buffer()
 
     except Exception as e:
-        error_message = f"Timeline Refresh Error: {e}"
+        error_message = f"{FG_RED}Timeline Refresh Error:{RESET} {e}"
         if shell._chan:  # Ensure channel exists before trying to write
             shell._clear_screen()
             shell._write_to_channel(error_message + "\r\n")
@@ -570,7 +575,7 @@ def _build_watch_screen_output(shell: "ItterShell", eets: List[Dict[str, Any]]) 
         output_buffer.append(f"{timeline_line}{separator_str}{sidebar_line}")
 
     # --- Assemble Footer (Status Line) ---
-    status_footer_raw = f"Live updating {tl_title_text_content}... {FG_BRIGHT_BLACK}(PgUp/PgDn to scroll. 'exit' to stop){RESET}"
+    status_footer_raw = f"Live updating {tl_title_text_content}... {FG_BRIGHT_BLACK}(PgUp/PgDn to scroll, 'exit' to stop){RESET}"
     status_footer_padded = utils.truncate_str_with_wcwidth(
         status_footer_raw, shell._term_width
     )  # Full terminal width

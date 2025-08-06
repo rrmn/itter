@@ -3,7 +3,8 @@ from typing import TYPE_CHECKING, List
 import itter.data.database as db
 import itter.core.utils as utils
 
-from itter.core.utils import FG_BRIGHT_BLACK, RESET
+from itter.core.utils import RESET, FG_BRIGHT_BLACK, FG_RED
+
 if TYPE_CHECKING:
     from itter.ssh.shell import ItterShell
 
@@ -43,13 +44,13 @@ async def handle_profile_command(
             pass
         if new_display_name is None and new_email is None and not reset_user:
             shell._write_to_channel(
-                f"{FG_BRIGHT_BLACK}Usage:{RESET} profile edit -name <Name> -email <Email> --reset"
+                f"{FG_BRIGHT_BLACK}Usage:{RESET} profile edit -name <Name> -email <Email> or --reset"
             )
         else:
             await db.db_update_profile(
                 shell.username, new_display_name, new_email, reset_user
             )
-            shell._write_to_channel("Profile updated.")
+            shell._write_to_channel("Profile updated. Looking fine!")
     else:
         profile_username = (
             user_refs[0]
@@ -58,15 +59,20 @@ async def handle_profile_command(
         )
         if profile_username.startswith("#"):
             shell._write_to_channel(
-                f"That's a channel, not a profile: {profile_username}"
+                f"{FG_RED}That's a channel, not a profile:{RESET} {profile_username}"
             )
             return
         try:
             stats = await db.db_get_profile_stats(profile_username)
+            display_name = (
+                stats.get("display_name") or f"{FG_BRIGHT_BLACK}none{RESET}"
+            )
+            email = stats.get("email") or f"{FG_BRIGHT_BLACK}none{RESET}"
+
             profile_output = (
                 f"\r\n\r\n\r\n\r\n--- Profile: @{stats['username']} ---\r\n"
-                + f"  Display Name: {stats.get('display_name', 'N/A')}\r\n"
-                + f"  Email:        {stats.get('email', 'N/A')}\r\n"
+                + f"  Display Name: {display_name}\r\n"
+                + f"  Email:        {email}\r\n"
                 + f"  Joined:       {utils.time_ago(stats.get('joined_at'))}\r\n"
                 + f"  Eets:         {stats['eet_count']}\r\n"
                 + f"  Following:    {stats['following_count']}\r\n"
@@ -74,13 +80,15 @@ async def handle_profile_command(
                 + "---------------------------\r\n"
             )
             # We need to import misc inside the function to avoid circular dependency
-            from . import misc as misc_cmd
+            from itter.ssh.commands import misc as misc_cmd
 
             shell._clear_screen()
             misc_cmd.display_welcome_banner(shell)
             shell._write_to_channel(profile_output)
         except ValueError as ve:
-            shell._write_to_channel(f"Error: {ve}")
+            shell._write_to_channel(f"{FG_RED}Error:{RESET} {ve}")
         except Exception as e:
             utils.debug_log(f"Err profile {profile_username}: {e}")
-            shell._write_to_channel(f"Error fetching profile for @{profile_username}.")
+            shell._write_to_channel(
+                f"{FG_RED}Couldn't @{profile_username}.{RESET} Is this user a... ghost?"
+            )

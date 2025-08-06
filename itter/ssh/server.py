@@ -60,7 +60,7 @@ class ItterSSHServer(asyncssh.SSHServer):
                 utils.debug_log(
                     f"Invalid registration username format: '{potential_username}'"
                 )
-                error_message = "Registration failed: Invalid username format (3-20 alphanumeric/underscore)."
+                error_message = "Username must be 3-20 characters (letters, numbers, underscores only)."
             else:
                 conflicting_db_username = await db.db_username_exists_case_insensitive(
                     potential_username
@@ -69,7 +69,9 @@ class ItterSSHServer(asyncssh.SSHServer):
                     utils.debug_log(
                         f"Registration attempt for '{potential_username}' rejected. Case-insensitive conflict with existing username: '{conflicting_db_username}'"
                     )
-                    error_message = f"Sorry, '{potential_username}' is already taken."
+                    error_message = (
+                        f"Sorry, the username '{potential_username}' is already taken."
+                    )
             if error_message:
                 await self._send_auth_failure_message(error_message)
                 self.is_registration_attempt = False
@@ -208,7 +210,7 @@ class ItterSSHServer(asyncssh.SSHServer):
                     f"Key validation success for user '{self.current_username}'."
                 )
                 # Update last_used_at for the key here
-                key_name = key_record.get('name')
+                key_name = key_record.get("name")
                 if key_name:
                     asyncio.create_task(
                         db.db_update_key_last_used(user_obj["id"], key_name)
@@ -246,7 +248,7 @@ class ItterSSHServer(asyncssh.SSHServer):
                 )
 
                 self._conn.send_auth_banner(
-                    "Registration process incomplete. Please try again.\r\n"
+                    "Something went wrong during registration. Please try again.\r\n"
                 )  # Optional
                 self._conn.disconnect(14, "Authentication failed")
                 return None  # Refuse session
@@ -268,7 +270,7 @@ class ItterSSHServer(asyncssh.SSHServer):
             # This means begin_auth likely failed or didn't establish a user,
             # but other auth (e.g. public key without specific user context) passed.
             utils.debug_log(
-                f"[CRITICAL] session_requested: No valid user context (not registration, no current_username). Refusing session."
+                "[CRITICAL] session_requested: No valid user context (not registration, no current_username). Refusing session."
             )
             return None
         if shell_to_return and active_sessions_ref is not None:

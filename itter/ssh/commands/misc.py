@@ -3,6 +3,7 @@ from typing import TYPE_CHECKING
 
 import itter.core.config as config
 from itter.core.utils import BOLD, RESET, FG_BRIGHT_BLACK
+
 if TYPE_CHECKING:
     from itter.ssh.shell import ItterShell
 
@@ -23,14 +24,14 @@ def show_help(shell: "ItterShell"):
         f"  {BOLD}t{RESET}ime{BOLD}l{RESET}ine {FG_BRIGHT_BLACK}[mine|all|#chan|@user] [<page>]{RESET} - Show eets (Default: all, 1).\r\n"
         f"  {BOLD}f{RESET}ollow {FG_BRIGHT_BLACK}[#chan|@user] --list{RESET}    - Follow a user or channel, list follows.\r\n"
         f"  {BOLD}u{RESET}n{BOLD}f{RESET}ollow {FG_BRIGHT_BLACK}[#chan|@user]{RESET}         - Unfollow a user or channel.\r\n"
-        f"  {BOLD}i{RESET}gnore {FG_BRIGHT_BLACK}@<user> --list{RESET}          - Ignore a user, list ignores.\r\n"
+        f"  {BOLD}i{RESET}gnore {FG_BRIGHT_BLACK}@<user> --list{RESET}          - Ignore a user, list ignored users.\r\n"
         f"  {BOLD}u{RESET}n{BOLD}i{RESET}gnore {FG_BRIGHT_BLACK}@<user>{RESET}               - Unignore a user.\r\n"
-        f"  {BOLD}p{RESET}rofile {FG_BRIGHT_BLACK}[@<user>]{RESET}              - View user profile (yours or another's).\r\n"
-        f"  {BOLD}p{RESET}rofile {BOLD}e{RESET}dit {FG_BRIGHT_BLACK}-name <Name> -email <Email> --reset{RESET} - Edit profile (or reset it).\r\n"
-        f"  {BOLD}s{RESET}ettings {FG_BRIGHT_BLACK}[pagesize|key]{RESET}        - View or change settings (e.g., public keys).\r\n"
-        f"  {BOLD}h{RESET}elp                           - Show this help message.\r\n"
+        f"  {BOLD}p{RESET}rofile {FG_BRIGHT_BLACK}[@<user>]{RESET}              - View a user profile (yours if no user specified).\r\n"
+        f"  {BOLD}p{RESET}rofile {BOLD}e{RESET}dit {FG_BRIGHT_BLACK}<options>{RESET}         - Edit your profile (e.g., -name, -email, --reset).\r\n"
+        f"  {BOLD}s{RESET}ettings {FG_BRIGHT_BLACK}[pagesize|key]{RESET}        - View/change settings (e.g., public keys).\r\n"
+        f"  {BOLD}h{RESET}elp                           - Show this excellent help message again.\r\n"
         f"  {BOLD}c{RESET}lear                          - Clear the screen.\r\n"
-        f"  e{BOLD}x{RESET}it                           - Exit watch mode or itter.sh.\r\n"
+        f"  e{BOLD}x{RESET}it                           - Exit watch mode or disconnect from itter.sh.\r\n"
     )
     shell._write_to_channel(help_text)
 
@@ -50,7 +51,7 @@ async def handle_exit_command(shell: "ItterShell"):
         show_help(shell)
         shell._prompt()
     else:
-        shell._write_to_channel("\nitter.sh says: Don't let the door hit you!")
+        shell._write_to_channel("\nLater!")
         shell.close()
 
 
