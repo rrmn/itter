@@ -27,11 +27,13 @@ class ItterShell(asyncssh.SSHServerSession):
         self,
         ssh_server_ref: "ItterSSHServer",
         initial_username: Optional[str],
+        authenticated_key: Optional[str],
         is_registration_flow: bool,
         registration_details: Optional[Tuple[str, str]],
     ):
         self._ssh_server = ssh_server_ref
         self.username: Optional[str] = initial_username
+        self._authenticated_key = authenticated_key
         self._is_registration_flow = is_registration_flow
         if self._is_registration_flow and registration_details:
             self._reg_username_candidate, self._reg_public_key = registration_details
@@ -48,7 +50,7 @@ class ItterShell(asyncssh.SSHServerSession):
         self._term_width = 80
         self._term_height = 24
         self._input_buffer = ""
-        self._cursor_pos = 0
+        self._cursor_pos = 0  # Cursor position within the input buffer
         self._command_history = CommandHistory()
         self._active_sessions: Optional[Dict[str, "ItterShell"]] = None
         self._client_ip: Optional[str] = None
@@ -494,7 +496,7 @@ class ItterShell(asyncssh.SSHServerSession):
                 await misc_cmd.handle_exit_command(self)
                 return
             else:
-                self._write_to_channel(f"Unknown command: '{cmd}'. Type 'help'.")
+                self._write_to_channel(f"Sorry, unknown command: '{FG_BRIGHT_BLACK}{cmd}{RESET}'. Type '{FG_BRIGHT_BLACK}help{RESET}' to see what's possible.")
         except ValueError as ve:
             self._write_to_channel(f"Error: {ve}")
         except Exception as e:

@@ -27,7 +27,7 @@ def show_help(shell: "ItterShell"):
         f"  {BOLD}u{RESET}n{BOLD}i{RESET}gnore {FG_BRIGHT_BLACK}@<user>{RESET}               - Unignore a user.\r\n"
         f"  {BOLD}p{RESET}rofile {FG_BRIGHT_BLACK}[@<user>]{RESET}              - View user profile (yours or another's).\r\n"
         f"  {BOLD}p{RESET}rofile {BOLD}e{RESET}dit {FG_BRIGHT_BLACK}-name <Name> -email <Email> --reset{RESET} - Edit profile (or reset it).\r\n"
-        f"  {BOLD}s{RESET}ettings                       - View or change settings.\r\n"
+        f"  {BOLD}s{RESET}ettings {FG_BRIGHT_BLACK}[pagesize|key]{RESET}        - View or change settings (e.g., public keys).\r\n"
         f"  {BOLD}h{RESET}elp                           - Show this help message.\r\n"
         f"  {BOLD}c{RESET}lear                          - Clear the screen.\r\n"
         f"  e{BOLD}x{RESET}it                           - Exit watch mode or itter.sh.\r\n"

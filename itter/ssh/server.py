@@ -188,17 +188,37 @@ class ItterSSHServer(asyncssh.SSHServer):
             # This might indicate an issue if they are expected to be same. For now, proceed with self.current_username.
 
         user_obj = await db.db_get_user_by_username(self.current_username)
-        if not user_obj or "public_key" not in user_obj or not user_obj["public_key"]:
+        if not user_obj:
             utils.debug_log(
-                f"User '{self.current_username}' (for '{username_from_auth_begin}') not found or has no public key. Returning False."
+                f"User '{self.current_username}' (for '{username_from_auth_begin}') not found. Returning False."
             )
             return False
-        stored_key = user_obj["public_key"].strip()
-        is_valid = stored_key == self.submitted_public_key
+
+        user_keys = await db.db_get_user_public_keys(user_obj["id"])
+        if not user_keys:
+            utils.debug_log(
+                f"User '{self.current_username}' has no registered public keys. Returning False."
+            )
+            return False
+
+        for key_record in user_keys:
+            stored_key = key_record.get("public_key", "").strip()
+            if stored_key and stored_key == self.submitted_public_key:
+                utils.debug_log(
+                    f"Key validation success for user '{self.current_username}'."
+                )
+                # Update last_used_at for the key here
+                key_name = key_record.get('name')
+                if key_name:
+                    asyncio.create_task(
+                        db.db_update_key_last_used(user_obj["id"], key_name)
+                    )
+                return True
+
         utils.debug_log(
-            f"Key validation for login user '{self.current_username}' (for '{username_from_auth_begin}'): {'Success' if is_valid else 'Failure'}. Returning {is_valid}."
+            f"Key validation failure for user '{self.current_username}'. Submitted key not in user's list."
         )
-        return is_valid
+        return False
 
     def session_requested(self) -> Optional["ItterShell"]:
         utils.debug_log(
@@ -213,6 +233,7 @@ class ItterSSHServer(asyncssh.SSHServer):
                 shell_to_return = ItterShell(
                     ssh_server_ref=self,
                     initial_username=None,
+                    authenticated_key=self.submitted_public_key,
                     is_registration_flow=True,
                     registration_details=(
                         self.registration_username_candidate,
@@ -227,7 +248,7 @@ class ItterSSHServer(asyncssh.SSHServer):
                 self._conn.send_auth_banner(
                     "Registration process incomplete. Please try again.\r\n"
                 )  # Optional
-                self._conn.disconnect(...)  # Optional
+                self._conn.disconnect(14, "Authentication failed")
                 return None  # Refuse session
 
                 return None
@@ -238,6 +259,7 @@ class ItterSSHServer(asyncssh.SSHServer):
             shell_to_return = ItterShell(
                 ssh_server_ref=self,
                 initial_username=self.current_username,
+                authenticated_key=self.submitted_public_key,
                 is_registration_flow=False,
                 registration_details=None,
             )

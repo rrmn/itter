@@ -68,16 +68,35 @@ async def db_username_exists_case_insensitive(username: str) -> Optional[str]:
 
 
 async def db_create_user(username: str, public_key: str) -> None:
-    """Creates a new user entry."""
+    """Creates a new user and adds their first public key."""
     if not supabase_client:
         raise RuntimeError("Database not initialized")
-    debug_log(f"DB: Creating user '{username}'")
+    debug_log(f"DB: Creating user '{username}' and adding initial key.")
+    
     try:
-        await asyncio.to_thread(
+        # Step 1: Create the user
+        user_resp = await asyncio.to_thread(
             supabase_client.table("users")
-            .insert({"username": username, "public_key": public_key})
+            .insert({"username": username})
             .execute
         )
+        if not user_resp.data:
+            raise Exception("User creation failed, no data returned.")
+        
+        new_user_id = user_resp.data[0]['id']
+
+        # Step 2: Add their first public key
+        await asyncio.to_thread(
+            supabase_client.table("user_public_keys")
+            .insert({
+                "user_id": new_user_id,
+                "public_key": public_key,
+                "name": "initial-key" # A default name for the first key
+            })
+            .execute
+        )
+        debug_log(f"DB: Successfully created user '{username}' (id: {new_user_id}) and added key.")
+
     except Exception as e:
         debug_log(f"[DB ERROR] db_create_user: {e}")
         # Re-raise crucial errors like unique constraint violations
@@ -165,9 +184,99 @@ async def db_get_profile_stats(username: str) -> Dict[str, Any]:
         debug_log(f"[DB ERROR] db_get_profile_stats: {e}")
         raise e
 
+# --- Public Key Operations ---
+
+async def db_get_user_public_keys(user_id: str) -> List[Dict[str, Any]]:
+    """Fetches all public keys for a given user ID."""
+    if not supabase_client:
+        raise RuntimeError("Database not initialized")
+    debug_log(f"DB: Getting public keys for user_id '{user_id}'")
+    try:
+        resp = await asyncio.to_thread(
+            supabase_client.table("user_public_keys")
+            .select("name, public_key, created_at")
+            .eq("user_id", user_id)
+            .execute
+        )
+        return resp.data if resp.data else []
+    except Exception as e:
+        debug_log(f"[DB ERROR] db_get_user_public_keys: {e}")
+        return []
+
+async def db_add_user_public_key(user_id: str, key_name: str, public_key_str: str) -> None:
+    """Adds a new public key for a user."""
+    if not supabase_client:
+        raise RuntimeError("Database not initialized")
+    debug_log(f"DB: Adding key '{key_name}' for user_id '{user_id}'")
+    try:
+        await asyncio.to_thread(
+            supabase_client.table("user_public_keys")
+            .insert({
+                "user_id": user_id,
+                "name": key_name,
+                "public_key": public_key_str
+            })
+            .execute
+        )
+    except Exception as e:
+        debug_log(f"[DB ERROR] db_add_user_public_key: {e}")
+        # Check for unique violation on (user_id, public_key)
+        if "duplicate key value violates unique constraint" in str(e):
+             raise ValueError("Hey there, no duplicates! This public key is already registered to your account.")
+        raise e
+
+async def db_remove_user_public_key(user_id: str, key_name: str) -> None:
+    """Removes a public key for a user by its name."""
+    if not supabase_client:
+        raise RuntimeError("Database not initialized")
+    debug_log(f"DB: Removing key '{key_name}' for user_id '{user_id}'")
+    try:
+        # We need to delete based on user_id and name
+        await asyncio.to_thread(
+            supabase_client.table("user_public_keys")
+            .delete()
+            .match({"user_id": user_id, "name": key_name})
+            .execute
+        )
+    except Exception as e:
+        debug_log(f"[DB ERROR] db_remove_user_public_key: {e}")
+        raise e
+
+async def db_get_key_count_for_user(user_id: str) -> int:
+    """Counts how many keys a user has."""
+    if not supabase_client:
+        raise RuntimeError("Database not initialized")
+    try:
+        resp = await asyncio.to_thread(
+            supabase_client.table("user_public_keys")
+            .select("id", count="exact")
+            .eq("user_id", user_id)
+            .execute
+        )
+        return resp.count if resp.count is not None else 0
+    except Exception as e:
+        debug_log(f"[DB ERROR] db_get_key_count_for_user: {e}")
+        return 0
+
+async def db_update_key_last_used(user_id: str, key_name: str) -> None:
+    """Updates the last_used_at timestamp for a specific key."""
+    if not supabase_client:
+        return
+    try:
+        # Using Supabase's now() is better for timezone consistency
+        await asyncio.to_thread(
+            supabase_client.table("user_public_keys")
+            .update({"last_used_at": "now()"})
+            .match({"user_id": user_id, "name": key_name})
+            .execute
+        )
+        debug_log(f"DB: Updated last_used_at for key '{key_name}' of user {user_id}")
+    except Exception as e:
+        debug_log(f"[DB ERROR] db_update_key_last_used: {e}")
+
+
 
 # --- Follow Operations ---
-
 
 async def db_is_following(follower_username: str, following_username: str) -> bool:
     if not supabase_client:
