@@ -1,11 +1,11 @@
-# /Users/roman/work/itter/ssh/commands/eet.py
+# /itter/ssh/commands/eet.py
 from typing import TYPE_CHECKING, List
-import database as db
-import utils
-import config
 
+import itter.data.database as db
+import itter.core.utils as utils
+import itter.core.config as config
 if TYPE_CHECKING:
-    from ssh.shell import ItterShell
+    from itter.ssh.shell import ItterShell
 
 
 async def handle_eet(

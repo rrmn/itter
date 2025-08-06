@@ -1,13 +1,12 @@
-# /Users/roman/work/itter/ssh/commands/follow.py
+# /itter/ssh/commands/follow.py
 import re
 from typing import TYPE_CHECKING
-import database as db
-import utils
-from utils import BOLD, RESET, FG_CYAN, FG_MAGENTA
 
+import itter.data.database as db
+import itter.core.utils as utils
+from itter.core.utils import BOLD, RESET, FG_CYAN, FG_MAGENTA
 if TYPE_CHECKING:
-    from ssh.shell import ItterShell
-
+    from itter.ssh.shell import ItterShell
 
 async def display_follow_lists(shell: "ItterShell"):
     if not shell.username:

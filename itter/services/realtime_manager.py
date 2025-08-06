@@ -2,11 +2,11 @@
 import asyncio
 import sys
 from typing import Dict, Any, Optional, TYPE_CHECKING
-
 from realtime import AsyncRealtimeClient, RealtimeSubscribeStates
-from utils import debug_log
+
+from itter.core.utils import debug_log
 if TYPE_CHECKING:
-    from ssh.shell import ItterShell
+    from itter.ssh.shell import ItterShell
 
 # Placeholder for the client - will be initialized in main.py
 rt_client: Optional[AsyncRealtimeClient] = None

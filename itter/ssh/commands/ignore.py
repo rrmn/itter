@@ -1,12 +1,12 @@
-# /Users/roman/work/itter/ssh/commands/ignore.py
+# /itter/ssh/commands/ignore.py
 import re
 from typing import TYPE_CHECKING
-import database as db
-import utils
-from utils import BOLD, RESET, FG_MAGENTA
 
+import itter.data.database as db
+import itter.core.utils as utils
+from itter.core.utils import BOLD, RESET, FG_MAGENTA
 if TYPE_CHECKING:
-    from ssh.shell import ItterShell
+    from itter.ssh.shell import ItterShell
 
 
 async def display_ignore_list(shell: "ItterShell"):

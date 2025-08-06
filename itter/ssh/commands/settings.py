@@ -1,10 +1,10 @@
-# /Users/roman/work/itter/ssh/commands/settings.py
+# /itter/ssh/commands/settings.py
 from typing import TYPE_CHECKING
-import config
-from utils import BOLD, RESET, FG_BRIGHT_BLACK
+import itter.core.config as config
 
+from itter.core.utils import BOLD, RESET, FG_BRIGHT_BLACK
 if TYPE_CHECKING:
-    from ssh.shell import ItterShell
+    from itter.ssh.shell import ItterShell
 
 
 async def handle_settings(shell: "ItterShell", raw_text: str):

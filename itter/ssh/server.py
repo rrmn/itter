@@ -5,8 +5,8 @@ from typing import Optional, Dict
 from .shell import ItterShell
 
 # Import from our modules
-import database as db
-import utils
+import itter.data.database as db
+import itter.core.utils as utils
 
 def init_ssh(sessions_dict: Dict[str, "ItterShell"]):
     """Initializes the SSH module with the active sessions reference."""

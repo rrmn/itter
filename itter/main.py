@@ -1,4 +1,4 @@
-# /Users/roman/work/itter/main.py
+# /main.py
 import asyncio
 import sys
 import traceback
@@ -7,12 +7,12 @@ from typing import Dict, Optional
 from supabase import create_client, Client
 from realtime import AsyncRealtimeClient
 
-import config
-import utils
-import database
-import realtime_manager
-from ssh import ssh_server
-from ssh.shell import ItterShell
+import itter.core.config as config
+import itter.core.utils as utils
+import itter.data.database as database
+import itter.services.realtime_manager as realtime_manager
+from itter.ssh import ssh_server
+from itter.ssh.shell import ItterShell
 
 # --- Global State ---
 # Use forward reference for ItterShell type hint
@@ -20,7 +20,6 @@ active_sessions: Dict[str, "ItterShell"] = {}
 
 # Use forward reference for type hint to avoid circular import if needed later
 active_sessions_ref: Optional[Dict[str, "ItterShell"]] = None
-
 
 # --- Initialization ---
 def initialize_clients():

@@ -5,13 +5,12 @@ from typing import Optional, Dict, Any, List, Tuple, TYPE_CHECKING
 if TYPE_CHECKING:
     from .server import ItterSSHServer
 
-import database as db
-import utils
-import config
-from command_history import CommandHistory
+import itter.data.database as db
+import itter.core.utils as utils
+import itter.core.config as config
+from itter.core.command_history import CommandHistory
 
-# Import command handlers
-from .commands import (
+from itter.ssh.commands import (
     eet as eet_cmd,
     timeline as timeline_cmd,
     follow as follow_cmd,
@@ -20,7 +19,7 @@ from .commands import (
     settings as settings_cmd,
     misc as misc_cmd,
 )
-from utils import BOLD, RESET, FG_BRIGHT_BLACK
+from itter.core.utils import BOLD, RESET, FG_BRIGHT_BLACK
 
 
 class ItterShell(asyncssh.SSHServerSession):

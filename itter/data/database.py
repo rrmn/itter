@@ -1,10 +1,11 @@
-# /Users/roman/work/itter/database.py
+# /database.py
 import asyncio
 from typing import Optional, Dict, Any, List
 from supabase import Client
-from utils import debug_log, hash_ip
 import traceback
-from config import ITTER_DEBUG_MODE, EET_MAX_LENGTH, DEFAULT_TIMELINE_PAGE_SIZE
+
+from itter.core.utils import debug_log, hash_ip
+from itter.core.config import ITTER_DEBUG_MODE, EET_MAX_LENGTH, DEFAULT_TIMELINE_PAGE_SIZE
 
 # Placeholder for the client - will be initialized in main.py
 supabase_client: Optional[Client] = None

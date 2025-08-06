@@ -1,10 +1,11 @@
-# /Users/roman/work/itter/utils.py
+# /utils.py
 import re
 import hashlib
 from datetime import datetime, timezone
 from typing import Optional, Tuple, List, Dict
 from wcwidth import wcswidth, wcwidth as get_char_width
-from config import ITTER_DEBUG_MODE, IP_HASH_SALT
+
+from itter.core.config import ITTER_DEBUG_MODE, IP_HASH_SALT
 
 # --- ANSI Escape Codes ---
 # Reset

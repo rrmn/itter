@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# This script collects all code-related files
+# into one .txt file for use in LLMs.
+
 # Define the output file
 OUTPUT_FILE="project_files_with_contents.txt"
 

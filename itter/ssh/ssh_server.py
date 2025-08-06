@@ -1,11 +1,12 @@
-# /Users/roman/work/itter/ssh_server.py
+# /itter/ssh_server.py
 import asyncssh
 import sys
 from typing import Dict
-from ssh.server import ItterSSHServer, init_ssh
-from ssh.shell import ItterShell
-import utils
-import config
+
+from itter.ssh.server import ItterSSHServer, init_ssh
+from itter.ssh.shell import ItterShell
+import itter.core.utils as utils
+import itter.core.config as config
 
 # --- SSH Server Start Function ---
 async def start_ssh_server(

@@ -1,22 +1,21 @@
-# /Users/roman/work/itter/ssh/commands/timeline.py
+# /itter/ssh/commands/timeline.py
 import asyncio
 import re
 import textwrap
 from typing import TYPE_CHECKING, Dict, Any, List
 
-import database as db
-import utils
-import config
-from utils import (
+import itter.data.database as db
+import itter.core.utils as utils
+import itter.core.config as config
+from itter.core.utils import (
     BOLD,
     RESET,
     FG_BRIGHT_BLACK,
     FG_BRIGHT_YELLOW,
     FG_GREEN,
 )
-
 if TYPE_CHECKING:
-    from ssh.shell import ItterShell
+    from itter.ssh.shell import ItterShell
 
 
 async def handle_timeline_and_watch(shell: "ItterShell", cmd: str, raw_text: str):

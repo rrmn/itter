@@ -1,11 +1,11 @@
-# /Users/roman/work/itter/ssh/commands/profile.py
+# /itter/ssh/commands/profile.py
 from typing import TYPE_CHECKING, List
-import database as db
-import utils
-from utils import FG_BRIGHT_BLACK, RESET
+import itter.data.database as db
+import itter.core.utils as utils
 
+from itter.core.utils import FG_BRIGHT_BLACK, RESET
 if TYPE_CHECKING:
-    from ssh.shell import ItterShell
+    from itter.ssh.shell import ItterShell
 
 
 async def handle_profile_command(

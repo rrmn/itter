@@ -1,10 +1,13 @@
-# /Users/roman/work/itter/config.py
+# /config.py
 import os
 import sys
 from dotenv import load_dotenv
+import importlib.resources
+
+# --- Resources ---
+BANNER_FILE = importlib.resources.files("itter.resources").joinpath("itter_banner.txt")
 
 # --- Constants ---
-BANNER_FILE = "itter_banner.txt"
 EET_MAX_LENGTH = 180
 SSH_HOST_KEY_PATH = "./ssh_host_key"
 MIN_TIMELINE_PAGE_SIZE = 1
