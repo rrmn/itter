@@ -48,6 +48,7 @@ class ItterShell(asyncssh.SSHServerSession):
         self._term_width = 80
         self._term_height = 24
         self._input_buffer = ""
+        self._cursor_pos = 0
         self._command_history = CommandHistory()
         self._active_sessions: Optional[Dict[str, "ItterShell"]] = None
         self._client_ip: Optional[str] = None
@@ -103,17 +104,31 @@ class ItterShell(asyncssh.SSHServerSession):
             if self._input_buffer:
                 self._write_to_channel(self._input_buffer, newline=False)
 
-    def _redraw_input_line(self):
-        # Move cursor to the beginning of the line
-        # Get prompt text to calculate length accurately
+    def _redraw_line_and_cursor(self):
+        """
+        Redraws the entire input line, including the prompt and buffer,
+        clears any old characters, and positions the cursor correctly.
+        """
+        if not self._chan:
+            return
+
+        # 1. Go to the beginning of the line
         self._write_to_channel("\r", newline=False)
+
+        # 2. Write the new content (prompt + buffer)
         prompt_text = self._get_prompt_text()
-        # Calculate total length of prompt + current buffer
-        total_len_to_clear = len(prompt_text) + len(self._input_buffer)
-        # Overwrite existing input with spaces to clear the line visually
-        self._write_to_channel(" " * total_len_to_clear, newline=False)
-        # Move cursor back to the beginning of the line again
-        self._write_to_channel("\r", newline=False)
+        self._write_to_channel(prompt_text + self._input_buffer, newline=False)
+
+        # 3. Clear any characters from the old, longer line
+        self._write_to_channel(
+            "\033[K", newline=False
+        )  # Erase from cursor to end of line
+
+        # 4. Move cursor back to the correct position
+        suffix = self._input_buffer[self._cursor_pos :]
+        move_left_count = utils.wcswidth(suffix)
+        if move_left_count > 0:
+            self._write_to_channel(f"\033[{move_left_count}D", newline=False)
 
     def connection_made(self, chan: asyncssh.SSHServerChannel) -> None:
         utils.debug_log(
@@ -217,18 +232,26 @@ class ItterShell(asyncssh.SSHServerSession):
         # Handle escape sequences
         if data.startswith("\x1b"):
             if data == "\x1b[A":  # Up arrow
-                self._redraw_input_line()
                 command = self._command_history.scroll_up()
                 self._input_buffer = command
-                self._prompt()
-                self._write_to_channel(self._input_buffer, newline=False)
+                self._cursor_pos = len(self._input_buffer)
+                self._redraw_line_and_cursor()
                 return
             elif data == "\x1b[B":  # Down arrow
-                self._redraw_input_line()
                 command = self._command_history.scroll_down()
                 self._input_buffer = command
-                self._prompt()
-                self._write_to_channel(self._input_buffer, newline=False)
+                self._cursor_pos = len(self._input_buffer)
+                self._redraw_line_and_cursor()
+                return
+            elif data == "\x1b[D":  # Left arrow
+                if self._cursor_pos > 0:
+                    self._cursor_pos -= 1
+                    self._write_to_channel(data, newline=False)
+                return
+            elif data == "\x1b[C":  # Right arrow
+                if self._cursor_pos < len(self._input_buffer):
+                    self._cursor_pos += 1
+                    self._write_to_channel(data, newline=False)
                 return
             # Page Up: \x1b[5~ , Page Down: \x1b[6~
             elif data == "\x1b[5~":  # Page Up (timeline scroll)
@@ -363,13 +386,18 @@ class ItterShell(asyncssh.SSHServerSession):
                 self._input_buffer = ""
                 if line_to_process:
                     utils.debug_log(f"Processing command line: '{line_to_process}'")
+                    self._cursor_pos = 0
                     asyncio.create_task(self._handle_command_line(line_to_process))
                 else:
                     self._prompt()
             elif char == "\x7f" or char == "\x08":  # Backspace
-                if self._input_buffer:
-                    self._input_buffer = self._input_buffer[:-1]
-                    self._write_to_channel("\b \b", newline=False)
+                if self._cursor_pos > 0:
+                    self._input_buffer = (
+                        self._input_buffer[: self._cursor_pos - 1]
+                        + self._input_buffer[self._cursor_pos :]
+                    )
+                    self._cursor_pos -= 1
+                    self._redraw_line_and_cursor()
             elif char == "\x03":  # Ctrl+C
                 self._write_to_channel("^C\r\n", newline=False)
                 self.close()
@@ -378,26 +406,34 @@ class ItterShell(asyncssh.SSHServerSession):
                 self.close()
             elif char == "\x15":  # Ctrl+U
                 if self._input_buffer:
-                    self._redraw_input_line()
                     self._input_buffer = ""
-                    self._prompt()
+                    self._cursor_pos = 0
+                    self._redraw_line_and_cursor()
             elif char == "\x17":  # Ctrl+W
-                if self._input_buffer:
+                if self._cursor_pos > 0:
                     old_buffer = self._input_buffer
-                    self._redraw_input_line()
-                    # Find the start of the last word
-                    i = len(old_buffer) - 1
-                    while i >= 0 and old_buffer[i].isspace():
-                        i -= 1
-                    j = i
-                    while j >= 0 and not old_buffer[j].isspace():
-                        j -= 1
-                    self._input_buffer = old_buffer[: j + 1]
-                    self._prompt()
-                    self._write_to_channel(self._input_buffer, newline=False)
+                    end_pos = self._cursor_pos
+                    # Move left past any spaces
+                    start_pos = end_pos - 1
+                    while start_pos >= 0 and old_buffer[start_pos].isspace():
+                        start_pos -= 1
+                    # Move left past the word
+                    while start_pos >= 0 and not old_buffer[start_pos].isspace():
+                        start_pos -= 1
+                    new_cursor_pos = start_pos + 1
+                    self._input_buffer = (
+                        old_buffer[:new_cursor_pos] + old_buffer[end_pos:]
+                    )
+                    self._cursor_pos = new_cursor_pos
+                    self._redraw_line_and_cursor()
             elif char.isprintable():
-                self._input_buffer += char
-                self._write_to_channel(char, newline=False)
+                self._input_buffer = (
+                    self._input_buffer[: self._cursor_pos]
+                    + char
+                    + self._input_buffer[self._cursor_pos :]
+                )
+                self._cursor_pos += 1
+                self._redraw_line_and_cursor()
             else:
                 utils.debug_log(f"Ignoring unhandled character: {char!r}")
 

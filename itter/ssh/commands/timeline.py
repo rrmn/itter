@@ -14,6 +14,7 @@ from itter.core.utils import (
     FG_BRIGHT_YELLOW,
     FG_GREEN,
 )
+
 if TYPE_CHECKING:
     from itter.ssh.shell import ItterShell
 
@@ -130,13 +131,13 @@ async def render_and_display_timeline(
         # This path is for the static 'timeline' command
         shell._sidebar_enabled = False  # Ensure sidebar is off for static timeline
         try:
-            shell._current_timeline_page = page
             eets = await db.db_get_filtered_timeline_posts(
                 shell.username,
                 shell._current_target_filter,
-                page=shell._current_timeline_page,
+                page=page,
                 page_size=shell._timeline_page_size,
             )
+            shell._current_timeline_page = page
             shell._last_timeline_eets_count = len(eets)
         except Exception as e:
             error_message = f"Timeline Error: {e}"
@@ -152,7 +153,6 @@ async def render_and_display_timeline(
         )
         shell._clear_screen()
         shell._write_to_channel(formatted_output, newline=True)
-        shell._prompt()
 
 
 def _format_timeline_output(
@@ -262,13 +262,16 @@ def _format_timeline_output(
     base_command_str = " ".join(base_command_parts)
     footer = ""
     if not eets and page > 1:
-        footer = f"No more eets on page {page}. Type `{base_command_str} {page - 1}` for previous."
+        if page > 1:
+            footer = f"No more eets on page {page}. Type `{base_command_str} {page - 1}` for previous."
     elif len(eets) >= shell._timeline_page_size:
-        footer = f"Type `{base_command_str} {page + 1}` for more, or `{base_command_str} {page - 1}` for previous (if page > 1)."
+        if page > 1:
+            footer = f"Type `{base_command_str} {page + 1}` for more, or `{base_command_str} {page - 1}` for previous."
+        else:
+            footer = f"Type `{base_command_str} {page + 1}` for more."
     elif eets:
-        footer = f"End of results on page {page}." + (
-            f" Type `{base_command_str} {page - 1}` for previous." if page > 1 else ""
-        )
+        if page > 1:
+            footer = f"End of results on page {page}. Type `{base_command_str} {page - 1}` for previous."
     if footer:
         footer_lines.append(footer)
     if footer_lines:
