@@ -72,7 +72,7 @@ async def db_create_user(username: str, public_key: str) -> None:
     if not supabase_client:
         raise RuntimeError("Database not initialized")
     debug_log(f"DB: Creating user '{username}' and adding initial key.")
-    
+
     try:
         # Step 1: Create the user
         user_resp = await asyncio.to_thread(
@@ -82,8 +82,8 @@ async def db_create_user(username: str, public_key: str) -> None:
         )
         if not user_resp.data:
             raise Exception("User creation failed, no data returned.")
-        
-        new_user_id = user_resp.data[0]['id']
+
+        new_user_id = user_resp.data[0]["id"]
 
         # Step 2: Add their first public key
         await asyncio.to_thread(
@@ -104,7 +104,10 @@ async def db_create_user(username: str, public_key: str) -> None:
 
 
 async def db_update_profile(
-    username: str, new_display_name: Optional[str], new_email: Optional[str], reset: Optional[bool] = False
+    username: str,
+    new_display_name: Optional[str],
+    new_email: Optional[str],
+    reset: Optional[bool] = False,
 ) -> None:
     if not supabase_client:
         raise RuntimeError("Database not initialized")
@@ -114,7 +117,7 @@ async def db_update_profile(
     user = await db_get_user_by_username(username)
     if not user:
         raise ValueError("User not found for profile update.")
-    
+
     update_data = {}
     if new_display_name is not None:
         update_data["display_name"] = new_display_name
@@ -184,7 +187,9 @@ async def db_get_profile_stats(username: str) -> Dict[str, Any]:
         debug_log(f"[DB ERROR] db_get_profile_stats: {e}")
         raise e
 
+
 # --- Public Key Operations ---
+
 
 async def db_get_user_public_keys(user_id: str) -> List[Dict[str, Any]]:
     """Fetches all public keys for a given user ID."""
@@ -203,7 +208,10 @@ async def db_get_user_public_keys(user_id: str) -> List[Dict[str, Any]]:
         debug_log(f"[DB ERROR] db_get_user_public_keys: {e}")
         return []
 
-async def db_add_user_public_key(user_id: str, key_name: str, public_key_str: str) -> None:
+
+async def db_add_user_public_key(
+    user_id: str, key_name: str, public_key_str: str
+) -> None:
     """Adds a new public key for a user."""
     if not supabase_client:
         raise RuntimeError("Database not initialized")
@@ -222,8 +230,9 @@ async def db_add_user_public_key(user_id: str, key_name: str, public_key_str: st
         debug_log(f"[DB ERROR] db_add_user_public_key: {e}")
         # Check for unique violation on (user_id, public_key)
         if "duplicate key value violates unique constraint" in str(e):
-             raise ValueError("Hey there, no duplicates! This public key is already registered to your account.")
+            raise ValueError("Hey there, no duplicates! This public key is already registered to your account.")
         raise e
+
 
 async def db_remove_user_public_key(user_id: str, key_name: str) -> None:
     """Removes a public key for a user by its name."""
@@ -242,6 +251,7 @@ async def db_remove_user_public_key(user_id: str, key_name: str) -> None:
         debug_log(f"[DB ERROR] db_remove_user_public_key: {e}")
         raise e
 
+
 async def db_get_key_count_for_user(user_id: str) -> int:
     """Counts how many keys a user has."""
     if not supabase_client:
@@ -257,6 +267,7 @@ async def db_get_key_count_for_user(user_id: str) -> int:
     except Exception as e:
         debug_log(f"[DB ERROR] db_get_key_count_for_user: {e}")
         return 0
+
 
 async def db_update_key_last_used(user_id: str, key_name: str) -> None:
     """Updates the last_used_at timestamp for a specific key."""
@@ -275,8 +286,8 @@ async def db_update_key_last_used(user_id: str, key_name: str) -> None:
         debug_log(f"[DB ERROR] db_update_key_last_used: {e}")
 
 
-
 # --- Follow Operations ---
+
 
 async def db_is_following(follower_username: str, following_username: str) -> bool:
     if not supabase_client:
@@ -754,9 +765,7 @@ async def db_get_filtered_timeline_posts(
             )
             return []
         rpc_name = "get_channel_timeline"
-        rpc_params["p_channel_tag"] = (
-            filter_value.lower()
-        )
+        rpc_params["p_channel_tag"] = filter_value.lower()
     elif filter_type == "user":
         if not filter_value or not isinstance(filter_value, str):
             debug_log(
