@@ -1,26 +1,26 @@
 import asyncio
 import asyncssh
-import re
-import textwrap
 from typing import Optional, Dict, Any, List, Tuple, TYPE_CHECKING
+
 if TYPE_CHECKING:
     from .server import ItterSSHServer
-from .commands import timeline as timeline_cmd
 
 import database as db
 import utils
 import config
 from command_history import CommandHistory
 
-from utils import (
-    BOLD,
-    FG_BRIGHT_BLACK,
-    RESET,
-    FG_CYAN,
-    FG_MAGENTA,
-    FG_BRIGHT_YELLOW,
-    FG_GREEN,
+# Import command handlers
+from .commands import (
+    eet as eet_cmd,
+    timeline as timeline_cmd,
+    follow as follow_cmd,
+    ignore as ignore_cmd,
+    profile as profile_cmd,
+    settings as settings_cmd,
+    misc as misc_cmd,
 )
+from utils import BOLD, RESET, FG_BRIGHT_BLACK
 
 
 class ItterShell(asyncssh.SSHServerSession):
@@ -137,8 +137,8 @@ class ItterShell(asyncssh.SSHServerSession):
         else:
             if self.username and self._active_sessions is not None:
                 self._active_sessions[self.username] = self
-                self._display_welcome_banner()
-                self._show_help()
+                misc_cmd.display_welcome_banner(self)
+                misc_cmd.show_help(self)
                 self._prompt()
             elif not self.username:
                 self._write_to_channel("ERROR: Login session started without username.")
@@ -184,32 +184,6 @@ class ItterShell(asyncssh.SSHServerSession):
             self._write_to_channel(f"ERROR: Registration failed. Details: {e}")
         finally:
             self.close()
-
-    def _display_welcome_banner(self):
-        self._clear_screen()
-        banner_lines = self._banner_text.splitlines()
-        for line in banner_lines:
-            self._write_to_channel(line)
-        self._write_to_channel()
-
-    def _show_help(self):
-        help_text = (
-            f"\r\nitter.sh Commands:\r\n"
-            f"  {BOLD}e{RESET}et {FG_BRIGHT_BLACK}<text>{RESET}                     - Post an eet (max {config.EET_MAX_LENGTH} chars).\r\n"
-            f"  {BOLD}w{RESET}atch {FG_BRIGHT_BLACK}[mine|all|#chan|@user]{RESET}   - Live timeline view (Default: all).\r\n"
-            f"  {BOLD}t{RESET}ime{BOLD}l{RESET}ine {FG_BRIGHT_BLACK}[mine|all|#chan|@user] [<page>]{RESET} - Show eets (Default: all, 1).\r\n"
-            f"  {BOLD}f{RESET}ollow {FG_BRIGHT_BLACK}[#chan|@user] --list{RESET}    - Follow a user or channel, list follows.\r\n"
-            f"  {BOLD}u{RESET}n{BOLD}f{RESET}ollow {FG_BRIGHT_BLACK}[#chan|@user]{RESET}         - Unfollow a user or channel.\r\n"
-            f"  {BOLD}i{RESET}gnore {FG_BRIGHT_BLACK}@<user> --list{RESET}          - Ignore a user, list ignores.\r\n"
-            f"  {BOLD}u{RESET}n{BOLD}i{RESET}gnore {FG_BRIGHT_BLACK}@<user>{RESET}               - Unignore a user.\r\n"
-            f"  {BOLD}p{RESET}rofile {FG_BRIGHT_BLACK}[@<user>]{RESET}              - View user profile (yours or another's).\r\n"
-            f"  {BOLD}p{RESET}rofile {BOLD}e{RESET}dit {FG_BRIGHT_BLACK}-name <Name> -email <Email> --reset{RESET} - Edit profile (or reset it).\r\n"
-            f"  {BOLD}s{RESET}ettings                       - View or change settings.\r\n"
-            f"  {BOLD}h{RESET}elp                           - Show this help message.\r\n"
-            f"  {BOLD}c{RESET}lear                          - Clear the screen.\r\n"
-            f"  e{BOLD}x{RESET}it                           - Exit watch mode or itter.sh.\r\n"
-        )
-        self._write_to_channel(help_text)
 
     def pty_requested(self, term_type: str, term_size: tuple, term_modes: dict) -> bool:
         cols = 80
@@ -263,8 +237,8 @@ class ItterShell(asyncssh.SSHServerSession):
                     if self._current_timeline_page > 1:
                         self._current_timeline_page -= 1
                         asyncio.create_task(
-                            self._refresh_watch_display(
-                                timeline_page_to_fetch=self._current_timeline_page
+                            timeline_cmd.refresh_watch_display(
+                                self, timeline_page_to_fetch=self._current_timeline_page
                             )
                         )
                     else:  # Already at first page of timeline
@@ -279,8 +253,10 @@ class ItterShell(asyncssh.SSHServerSession):
                     if self._current_timeline_page > 1:
                         self._current_timeline_page -= 1
                         asyncio.create_task(
-                            self._render_and_display_timeline(
-                                page=self._current_timeline_page, is_live_update=False
+                            timeline_cmd.render_and_display_timeline(
+                                self,
+                                page=self._current_timeline_page,
+                                is_live_update=False,
                             )
                         )  # is_live_update is False
                     else:
@@ -298,8 +274,8 @@ class ItterShell(asyncssh.SSHServerSession):
                     if can_page_down_live:  # For live, assume more can come unless last fetch was < page_size
                         self._current_timeline_page += 1
                         asyncio.create_task(
-                            self._refresh_watch_display(
-                                timeline_page_to_fetch=self._current_timeline_page
+                            timeline_cmd.refresh_watch_display(
+                                self, timeline_page_to_fetch=self._current_timeline_page
                             )
                         )
                     else:
@@ -316,8 +292,10 @@ class ItterShell(asyncssh.SSHServerSession):
                     if can_page_down_static:
                         self._current_timeline_page += 1
                         asyncio.create_task(
-                            self._render_and_display_timeline(
-                                page=self._current_timeline_page, is_live_update=False
+                            timeline_cmd.render_and_display_timeline(
+                                self,
+                                page=self._current_timeline_page,
+                                is_live_update=False,
                             )
                         )
                     else:
@@ -337,8 +315,8 @@ class ItterShell(asyncssh.SSHServerSession):
                         f"Sidebar scroll up. New offset: {self._sidebar_scroll_offset}"
                     )
                     asyncio.create_task(
-                        self._refresh_watch_display(
-                            timeline_page_to_fetch=self._current_timeline_page
+                        timeline_cmd.refresh_watch_display(
+                            self, timeline_page_to_fetch=self._current_timeline_page
                         )
                     )  # Redraw with current timeline page
                     return
@@ -369,8 +347,8 @@ class ItterShell(asyncssh.SSHServerSession):
                         f"Sidebar scroll down. New offset: {self._sidebar_scroll_offset}, Max scroll: {max_scroll}"
                     )
                     asyncio.create_task(
-                        self._refresh_watch_display(
-                            timeline_page_to_fetch=self._current_timeline_page
+                        timeline_cmd.refresh_watch_display(
+                            self, timeline_page_to_fetch=self._current_timeline_page
                         )
                     )  # Redraw with current timeline page
                     return
@@ -428,104 +406,6 @@ class ItterShell(asyncssh.SSHServerSession):
         if self._chan:
             self._chan.write("\033[2J\033[H")
 
-    async def _display_follow_lists(self):
-        if not self.username:
-            return
-
-        try:
-            following_list = await db.db_get_user_following(self.username)
-            followers_list = await db.db_get_user_followers(self.username)
-            following_channels_list = await db.db_get_user_following_channels(
-                self.username
-            )
-        except Exception as e:
-            self._write_to_channel(f"Error fetching follow lists: {e}")
-            return
-
-        output_lines = []
-        output_lines.append(
-            f"\r\n{BOLD}--- You are following ({len(following_list)} users) ---{RESET}"
-        )
-        if not following_list:
-            output_lines.append(
-                f"  Not following anyone yet. Use `{BOLD}follow @user{RESET}`."
-            )
-        else:
-            for user_data in following_list:
-                display_name_part = (
-                    f" ({user_data['display_name']})"
-                    if user_data.get("display_name")
-                    else ""
-                )
-                time_part = f" - since {utils.time_ago(user_data.get('created_at'))}"
-                output_lines.append(
-                    f"  {FG_CYAN}@{user_data['username']}{RESET}{display_name_part}{time_part}"
-                )
-
-        output_lines.append(
-            f"\r\n{BOLD}--- You are following ({len(following_channels_list)} channels) ---{RESET}"
-        )
-        if not following_channels_list:
-            output_lines.append(
-                f"  Not following any channels yet. Use `{BOLD}follow #channel{RESET}`."
-            )
-        else:
-            for channel_data in following_channels_list:
-                time_part = f" - since {utils.time_ago(channel_data.get('created_at'))}"
-                output_lines.append(
-                    f"  {FG_MAGENTA}#{channel_data['channel_tag']}{RESET}{time_part}"
-                )
-
-        output_lines.append(
-            f"\r\n{BOLD}--- Follows you ({len(followers_list)} users) ---{RESET}"
-        )
-        if not followers_list:
-            output_lines.append("  No followers yet. Be more eet-eresting!")
-        else:
-            for user_data in followers_list:
-                display_name_part = (
-                    f" ({user_data['display_name']})"
-                    if user_data.get("display_name")
-                    else ""
-                )
-                time_part = f" - since {utils.time_ago(user_data.get('created_at'))}"
-                output_lines.append(
-                    f"  {FG_CYAN}@{user_data['username']}{RESET}{display_name_part}{time_part}"
-                )
-
-        output_lines.append("\r\n")
-        self._write_to_channel("\r\n".join(output_lines))
-
-    async def _display_ignore_list(self):
-        if not self.username:
-            return
-        try:
-            ignoring_list = await db.db_get_user_ignoring(self.username)
-        except Exception as e:
-            self._write_to_channel(f"Error fetching ignore list: {e}")
-            return
-        output_lines = []
-        output_lines.append(
-            f"\r\n{BOLD}--- You are ignoring ({len(ignoring_list)} users) ---{RESET}"
-        )
-        if not ignoring_list:
-            output_lines.append(
-                f"  Not ignoring anyone. What a saint! Use `{BOLD}ignore @user{RESET}` if needed."
-            )
-        else:
-            for user_data in ignoring_list:
-                display_name_part = (
-                    f" ({user_data['display_name']})"
-                    if user_data.get("display_name")
-                    else ""
-                )
-                time_part = f" - since {utils.time_ago(user_data.get('created_at'))}"
-                output_lines.append(
-                    f"  {FG_MAGENTA}@{user_data['username']}{RESET}{display_name_part}{time_part}"
-                )
-        output_lines.append("\r\n")
-        self._write_to_channel("\r\n".join(output_lines))
-
     async def _handle_command_line(self, line: str):
         if not self.username and not self._is_registration_flow:
             self._write_to_channel("ERROR: Critical error: No user context.")
@@ -544,244 +424,39 @@ class ItterShell(asyncssh.SSHServerSession):
             self._command_history.add((cmd + " " + raw_text_full.strip()).strip())
             if cmd not in ["timeline", "tl", "watch", "w"]:
                 self._last_timeline_eets_count = None
+
             if cmd == "eet" or cmd == "e":
-                content = raw_text_full.strip()
-                if not content:
-                    self._write_to_channel("Usage: eet <text>")
-                elif len(content) > config.EET_MAX_LENGTH:
-                    self._write_to_channel(
-                        f"ERROR: Eet too long! Max {config.EET_MAX_LENGTH}."
-                    )
-                else:
-                    await db.db_post_eet(
-                        self.username,
-                        content,
-                        hashtags_in_full_line,
-                        user_refs_in_full_line,
-                        self._client_ip,
-                    )
-                    self._write_to_channel("Eet posted!")
-                    if self._is_watching_timeline:
-                        utils.debug_log(
-                            "Eet posted while watching, triggering immediate timeline refresh."
-                        )
-                        await self._refresh_watch_display(timeline_page_to_fetch=1)
+                await eet_cmd.handle_eet(
+                    self,
+                    raw_text_full,
+                    hashtags_in_full_line,
+                    user_refs_in_full_line,
+                )
             elif cmd == "timeline" or cmd == "tl" or cmd == "watch" or cmd == "w":
-                self._current_timeline_page = 1
-                target_specifier_text = raw_text_full
-                parts = raw_text_full.split()
-                page_from_input = None
-                if parts and parts[-1].isdigit():
-                    page_from_input = int(parts[-1])
-                    target_specifier_text = " ".join(parts[:-1]).strip()
-                if target_specifier_text.startswith("@"):
-                    user_match = re.match(r"^@(\w{3,20})$", target_specifier_text)
-                    if user_match:
-                        self._current_target_filter = {
-                            "type": "user",
-                            "value": user_match.group(1),
-                        }
-                    else:
-                        self._write_to_channel(
-                            f"Invalid user format: '{target_specifier_text}'. Defaulting to 'all'."
-                        )
-                        self._current_target_filter = {"type": "all", "value": None}
-                elif target_specifier_text.startswith("#"):
-                    channel_match = re.match(
-                        r"^#(\w(?:[\w-]*\w)?)$", target_specifier_text
-                    )
-                    if channel_match:
-                        self._current_target_filter = {
-                            "type": "channel",
-                            "value": channel_match.group(1),
-                        }
-                    else:
-                        self._write_to_channel(
-                            f"Invalid channel format: '{target_specifier_text}'. Defaulting to 'all'."
-                        )
-                        self._current_target_filter = {"type": "all", "value": None}
-                else:
-                    self._current_target_filter = utils.parse_target_filter(
-                        target_specifier_text
-                    )
-                if page_from_input is not None:
-                    self._current_timeline_page = page_from_input
-                utils.debug_log(
-                    f"Timeline/Watch target set to: {self._current_target_filter}, page: {self._current_timeline_page}"
-                )
-
-                is_watch_command = cmd == "watch" or cmd == "w"
-                self._sidebar_enabled = (
-                    is_watch_command  # Enable sidebar only for watch
-                )
-                self._is_watching_timeline = is_watch_command
-
-                if is_watch_command:
-                    self._sidebar_scroll_offset = 0  # Reset scroll on new watch
-                    await (
-                        self._start_live_timeline_view()
-                    )  # Calls _refresh_watch_display
-                    return  # Loop is handled by _timeline_refresh_loop
-                else:  # Static timeline command
-                    await self._render_and_display_timeline(
-                        page=self._current_timeline_page, is_live_update=False
-                    )
+                await timeline_cmd.handle_timeline_and_watch(self, cmd, raw_text_full)
+                if self._is_watching_timeline:
+                    return
             elif cmd == "follow" or cmd == "f":
-                target_text = raw_text_full.strip()
-                if target_text.lower() == "--list":
-                    await self._display_follow_lists()
-                elif target_text.startswith("#"):
-                    channel_tag_to_follow = target_text[1:]
-                    if not channel_tag_to_follow or not re.match(
-                        r"^[a-zA-Z0-9][a-zA-Z0-9-]*[a-zA-Z0-9]$|^[a-zA-Z0-9]$",
-                        channel_tag_to_follow,
-                    ):
-                        self._write_to_channel(
-                            f"Invalid channel name format: '#{channel_tag_to_follow}'. Must be alphanumeric with hyphens, not starting/ending with hyphen."
-                        )
-                    else:
-                        await db.db_follow_channel(self.username, channel_tag_to_follow)
-                        self._write_to_channel(
-                            f"Now following channel {FG_MAGENTA}#{channel_tag_to_follow.lower()}{RESET}. Posts from this channel will appear in your 'mine' feed."
-                        )
-                elif target_text.startswith("@"):
-                    target_user_to_follow = target_text[1:]
-                    if not target_user_to_follow or not re.match(
-                        r"^[a-zA-Z0-9_]{3,20}$", target_user_to_follow
-                    ):
-                        self._write_to_channel(
-                            "Invalid username format: '@username' (3-20 alphanumeric/underscore)."
-                        )
-                    else:
-                        await db.db_follow_user(self.username, target_user_to_follow)
-                        self._write_to_channel(
-                            f"Following {FG_CYAN}@{target_user_to_follow}{RESET}. You will now see their posts on your 'mine' page."
-                        )
-                else:
-                    self._write_to_channel(
-                        f"Usage: {BOLD}follow @<user>{RESET} OR {BOLD}follow #<channel>{RESET} OR {BOLD}follow --list{RESET}"
-                    )
+                await follow_cmd.handle_follow(self, raw_text_full)
             elif cmd == "unfollow" or cmd == "uf":
-                target_text = raw_text_full.strip()
-                if target_text.startswith("#"):
-                    channel_tag_to_unfollow = target_text[1:]
-                    if not channel_tag_to_unfollow or not re.match(
-                        r"^[a-zA-Z0-9][a-zA-Z0-9-]*[a-zA-Z0-9]$|^[a-zA-Z0-9]$",
-                        channel_tag_to_unfollow,
-                    ):
-                        self._write_to_channel(
-                            f"Invalid channel name format: '#{channel_tag_to_unfollow}'."
-                        )
-                    else:
-                        await db.db_unfollow_channel(
-                            self.username, channel_tag_to_unfollow
-                        )
-                        self._write_to_channel(
-                            f"No longer following channel {FG_MAGENTA}#{channel_tag_to_unfollow.lower()}{RESET}."
-                        )
-                elif target_text.startswith("@"):
-                    target_user_to_unfollow = target_text[1:]
-                    if not target_user_to_unfollow or not re.match(
-                        r"^[a-zA-Z0-9_]{3,20}$", target_user_to_unfollow
-                    ):
-                        self._write_to_channel("Invalid username format: '@username'.")
-                    else:
-                        await db.db_unfollow_user(
-                            self.username, target_user_to_unfollow
-                        )
-                        self._write_to_channel(
-                            f"Unfollowed {FG_CYAN}@{target_user_to_unfollow}{RESET}. They won't show up on your 'mine' page anymore."
-                        )
-                else:
-                    self._write_to_channel(
-                        f"Usage: {BOLD}unfollow @<user>{RESET} OR {BOLD}unfollow #<channel>{RESET}"
-                    )
+                await follow_cmd.handle_unfollow(self, raw_text_full)
             elif cmd == "ignore" or cmd == "i":
-                target_text_ignore = raw_text_full.strip()
-                if target_text_ignore.lower() == "--list":
-                    await self._display_ignore_list()
-                elif target_text_ignore.startswith("@"):
-                    target_user_to_ignore = target_text_ignore[1:]
-                    if not target_user_to_ignore or not re.match(
-                        r"^[a-zA-Z0-9_]{3,20}$", target_user_to_ignore
-                    ):
-                        self._write_to_channel("Invalid username format: '@username'.")
-                    elif target_user_to_ignore == self.username:
-                        self._write_to_channel(
-                            "You cannot ignore yourself. (That's what my psychologist said)"
-                        )
-                    else:
-                        await db.db_ignore_user(self.username, target_user_to_ignore)
-                        self._write_to_channel(
-                            f"Okay, @{target_user_to_ignore} will now be ignored. Their posts won't appear in your timelines. Phew."
-                        )
-                else:
-                    self._write_to_channel(
-                        f"Usage: {BOLD}ignore @<user>{RESET} OR {BOLD}ignore --list{RESET}"
-                    )
+                await ignore_cmd.handle_ignore(self, raw_text_full)
             elif cmd == "unignore" or cmd == "ui":
-                target_text_unignore = raw_text_full.strip()
-                if target_text_unignore.startswith("@"):
-                    target_user_to_unignore = target_text_unignore[1:]
-                    if not target_user_to_unignore or not re.match(
-                        r"^[a-zA-Z0-9_]{3,20}$", target_user_to_unignore
-                    ):
-                        self._write_to_channel("Invalid username format: '@username'.")
-                    else:
-                        await db.db_unignore_user(
-                            self.username, target_user_to_unignore
-                        )
-                        self._write_to_channel(
-                            f"Okay, @{target_user_to_unignore} is forgiven and will no longer be ignored. You'll see their posts again."
-                        )
-                else:
-                    self._write_to_channel(f"Usage: {BOLD}unignore @<user>{RESET}")
+                await ignore_cmd.handle_unignore(self, raw_text_full)
             elif cmd == "profile" or cmd == "p":
-                await self._handle_profile_command(
-                    raw_text_full, user_refs_in_full_line
+                await profile_cmd.handle_profile_command(
+                    self, raw_text_full, user_refs_in_full_line
                 )
             elif cmd == "settings" or cmd == "s":
-                parts = raw_text_full.lower().split()
-                if not parts:
-                    self._write_to_channel(
-                        f"\r\nCurrent settings:\r\n  Eets per page: {BOLD}{self._timeline_page_size}{RESET}\r\n  {FG_BRIGHT_BLACK}Usage:{RESET} settings pagesize <{config.MIN_TIMELINE_PAGE_SIZE}-{config.MAX_TIMELINE_PAGE_SIZE}>"
-                    )
-                elif len(parts) == 2 and parts[0] == "pagesize":
-                    try:
-                        new_size = int(parts[1])
-                        if (
-                            config.MIN_TIMELINE_PAGE_SIZE
-                            <= new_size
-                            <= config.MAX_TIMELINE_PAGE_SIZE
-                        ):
-                            self._timeline_page_size = new_size
-                            self._write_to_channel(
-                                f"All right! You will now see {new_size} eets per page."
-                            )
-                        else:
-                            self._write_to_channel(
-                                f"Error: Page size must be between {config.MIN_TIMELINE_PAGE_SIZE} and {config.MAX_TIMELINE_PAGE_SIZE}."
-                            )
-                    except ValueError:
-                        self._write_to_channel("That... was not a number.")
-                else:
-                    self._write_to_channel(
-                        f"{FG_BRIGHT_BLACK}Usage:{RESET} settings pagesize <{config.MIN_TIMELINE_PAGE_SIZE}-{config.MAX_TIMELINE_PAGE_SIZE}>"
-                    )
+                await settings_cmd.handle_settings(self, raw_text_full)
             elif cmd == "help" or cmd == "h":
-                self._display_welcome_banner()
-                self._show_help()
+                await misc_cmd.handle_help(self)
             elif cmd == "clear" or cmd == "c":
-                self._clear_screen()
-                if self._is_watching_timeline:
-                    await self._refresh_watch_display(
-                        timeline_page_to_fetch=self._current_timeline_page
-                    )
-                else:
-                    self._prompt()
+                await misc_cmd.handle_clear(self)
                 return
             elif cmd == "exit" or cmd == "x":
-                await self._handle_exit_command()
+                await misc_cmd.handle_exit_command(self)
                 return
             else:
                 self._write_to_channel(f"Unknown command: '{cmd}'. Type 'help'.")
@@ -797,613 +472,8 @@ class ItterShell(asyncssh.SSHServerSession):
         if self._chan and not self._is_watching_timeline:
             self._prompt()
 
-    async def _handle_profile_command(self, raw_text: str, user_refs: List[str]):
-        args = raw_text.split()
-        if args and (args[0].lower() == "edit" or args[0].lower() == "e"):
-            new_display_name, new_email, reset_user = None, None, False
-            try:
-                idx = args.index("-name")
-                new_display_name = (
-                    args[idx + 1]
-                    if len(args) > idx + 1 and not args[idx + 1].startswith("-")
-                    else None
-                )
-            except (ValueError, IndexError):
-                pass
-            try:
-                idx = args.index("-email")
-                new_email = (
-                    args[idx + 1]
-                    if len(args) > idx + 1 and not args[idx + 1].startswith("-")
-                    else None
-                )
-            except (ValueError, IndexError):
-                pass
-            try:
-                if args.index("--reset") != -1:
-                    reset_user = True
-                    new_display_name = None
-                    new_email = None
-            except (ValueError, IndexError):
-                pass
-            if new_display_name is None and new_email is None and not reset_user:
-                self._write_to_channel(
-                    f"{FG_BRIGHT_BLACK}Usage:{RESET} profile edit -name <Name> -email <Email> --reset"
-                )
-            else:
-                await db.db_update_profile(
-                    self.username, new_display_name, new_email, reset_user
-                )
-                self._write_to_channel("Profile updated.")
-        else:
-            profile_username = (
-                user_refs[0]
-                if user_refs
-                else (
-                    raw_text.strip().lstrip("@") if raw_text.strip() else self.username
-                )
-            )
-            if profile_username.startswith("#"):
-                self._write_to_channel(
-                    f"That's a channel, not a profile: {profile_username}"
-                )
-                return
-            try:
-                stats = await db.db_get_profile_stats(profile_username)
-                profile_output = (
-                    f"\r\n\r\n\r\n\r\n--- Profile: @{stats['username']} ---\r\n"
-                    + f"  Display Name: {stats.get('display_name', 'N/A')}\r\n"
-                    + f"  Email:        {stats.get('email', 'N/A')}\r\n"
-                    + f"  Joined:       {utils.time_ago(stats.get('joined_at'))}\r\n"
-                    + f"  Eets:         {stats['eet_count']}\r\n"
-                    + f"  Following:    {stats['following_count']}\r\n"
-                    + f"  Followers:    {stats['follower_count']}\r\n"
-                    + "---------------------------\r\n"
-                )
-                self._clear_screen()
-                self._display_welcome_banner()
-                self._write_to_channel(profile_output)
-            except ValueError as ve:
-                self._write_to_channel(f"Error: {ve}")
-            except Exception as e:
-                utils.debug_log(f"Err profile {profile_username}: {e}")
-                self._write_to_channel(
-                    f"Error fetching profile for @{profile_username}."
-                )
-
-    async def _handle_exit_command(self):  # MODIFIED: Handle sidebar state
-        if self._is_watching_timeline:
-            self._is_watching_timeline = False
-            self._sidebar_enabled = False  # Disable sidebar
-            if (
-                self._timeline_auto_refresh_task
-                and not self._timeline_auto_refresh_task.done()
-            ):
-                self._timeline_auto_refresh_task.cancel()
-            # Restore normal screen after exiting watch mode
-            self._clear_screen()
-            self._display_welcome_banner()
-            self._show_help()
-            self._prompt()
-        else:
-            self._write_to_channel("\nitter.sh says: Don't let the door hit you!")
-            self.close()
-
-    async def _start_live_timeline_view(
-        self,
-    ):
-        # This method is called when 'watch' command starts
-        self._sidebar_enabled = True
-        self._sidebar_scroll_offset = 0
-        self._current_timeline_page = 1
-
-        # Initial display
-        await self._refresh_watch_display(timeline_page_to_fetch=1)
-
-        # Start background refresh loop if not already running or if it was cancelled
-        if (
-            self._timeline_auto_refresh_task
-            and not self._timeline_auto_refresh_task.done()
-        ):
-            self._timeline_auto_refresh_task.cancel()
-        self._timeline_auto_refresh_task = asyncio.create_task(
-            self._timeline_refresh_loop()
-        )
-
-    async def _timeline_refresh_loop(self):
-        try:
-            while self._is_watching_timeline:
-                await asyncio.sleep(config.WATCH_REFRESH_INTERVAL_SECONDS)
-                if self._is_watching_timeline:
-                    utils.debug_log("Live timeline auto-refresh triggered.")
-                    await self._refresh_watch_display(
-                        timeline_page_to_fetch=1
-                    )  # Refresh to page 1, sidebar scroll maintained
-        except asyncio.CancelledError:
-            utils.debug_log("Timeline refresh loop cancelled.")
-        except Exception as e:
-            utils.debug_log(f"Error in timeline refresh loop: {e}")
-            if self._is_watching_timeline and self._chan:
-                self._clear_screen()
-                self._write_to_channel(f"ERROR: Live timeline update error: {e}\r\n")
-                self._redraw_prompt_and_buffer()
-
-    async def _render_and_display_timeline(
-        self, page: int, is_live_update: bool = False
-    ):
-        """
-        Renders timeline. If is_live_update is True (watch mode), it uses _refresh_watch_display.
-        Otherwise, it uses the original static timeline formatting.
-        """
-        if not self.username:
-            return
-
-        if is_live_update and self._is_watching_timeline:
-            # This path is for watch mode updates (initial, scroll, auto-refresh)
-            await self._refresh_watch_display(timeline_page_to_fetch=page)
-        else:
-            # This path is for the static 'timeline' command
-            self._sidebar_enabled = False  # Ensure sidebar is off for static timeline
-            try:
-                self._current_timeline_page = page
-                eets = await db.db_get_filtered_timeline_posts(
-                    self.username,
-                    self._current_target_filter,
-                    page=self._current_timeline_page,
-                    page_size=self._timeline_page_size,
-                )
-                self._last_timeline_eets_count = len(eets)
-            except Exception as e:
-                error_message = f"Timeline Error: {e}"
-                if self._chan:
-                    self._write_to_channel(error_message)
-                return
-
-            formatted_output = await asyncio.to_thread(
-                self._format_timeline_output,
-                eets,
-                self._current_timeline_page,
-            )
-            self._clear_screen()
-            self._write_to_channel(formatted_output, newline=True)
-            self._prompt()
-
-    # This method is ONLY for static timeline display (no sidebar)
-    def _format_timeline_output(self, eets: List[Dict[str, Any]], page: int) -> str:
-        time_w = 12
-        user_w = 20
-        sep_w = 3
-        eet_w = max(10, self._term_width - time_w - user_w - (sep_w * 2) - 2)
-        target_type_display = self._current_target_filter["type"]
-        target_value_display = self._current_target_filter["value"]
-        if target_type_display == "channel" and target_value_display:
-            timeline_title = f"#{target_value_display}"
-        elif target_type_display == "user" and target_value_display:
-            timeline_title = f"@{target_value_display}"
-        elif target_type_display == "mine":
-            timeline_title = "Your 'Mine' Feed"
-        else:
-            timeline_title = "All Eets"
-        header_line = (
-            f"--- {timeline_title} (Page {page}, {self._timeline_page_size} items) ---"
-        )
-        output_lines = [f"{BOLD}{header_line}{RESET}"]
-        output_lines.append(
-            f"{'Time':<{time_w}}   {'User':<{user_w}}   {'Eet':<{eet_w}}"
-        )
-        output_lines.append(
-            f"{FG_BRIGHT_BLACK}"
-            + "-" * min(self._term_width, time_w + user_w + eet_w + (sep_w * 2))
-            + f"{RESET}"
-        )
-        if not eets:
-            output_lines.append(
-                " No eets found."
-                if page == 1
-                else f" End of timeline for {timeline_title}."
-            )
-        else:
-            for eet in eets:
-                time_str = utils.time_ago(eet.get("created_at"))
-                author_username = eet.get("username", "ghost")
-                author_display_name = eet.get("display_name")
-                user_display_str_raw = f"@{author_username}"
-                user_final_display_name = (
-                    f"{author_display_name} ({user_display_str_raw})"
-                    if author_display_name
-                    else user_display_str_raw
-                )
-                user_final_display_name_truncated = utils.truncate_str_with_wcwidth(
-                    user_final_display_name, user_w
-                )
-                user_column_str_colored = user_final_display_name_truncated
-                if author_username.lower() == self.username.lower():
-                    user_column_str_colored = f"{utils.FG_BRIGHT_YELLOW}{user_final_display_name_truncated}{utils.RESET}"
-                user_col_visual_width_after_truncate = utils.wcswidth(
-                    utils.strip_ansi(user_final_display_name_truncated)
-                )  # Use strip_ansi for wcswidth
-                user_col_padding_spaces = user_w - user_col_visual_width_after_truncate
-                user_col_padded_final = (
-                    f"{user_column_str_colored}{' ' * max(0, user_col_padding_spaces)}"
-                )
-                raw_content = (
-                    eet.get("content", "").replace("\r", "").replace("\n", " ")
-                )
-                wrapper = textwrap.TextWrapper(
-                    width=eet_w,
-                    subsequent_indent="  ",
-                    break_long_words=True,
-                    break_on_hyphens=True,
-                    replace_whitespace=False,
-                    drop_whitespace=True,
-                )
-                content_lines_raw = wrapper.wrap(text=utils.strip_ansi(raw_content))
-                if not content_lines_raw:
-                    output_lines.append(
-                        f"{time_str:<{time_w}} | {user_col_padded_final} | "
-                    )
-                else:
-                    first_line_formatted = utils.format_eet_content(
-                        content_lines_raw[0], self.username, utils.FG_BRIGHT_YELLOW
-                    )
-                    output_lines.append(
-                        f"{time_str:<{time_w}} "
-                        + " "
-                        + f" {user_col_padded_final} "
-                        + " "
-                        + f" {first_line_formatted}"
-                    )
-                    indent_visual_width = time_w + sep_w + user_w + sep_w
-                    indent_str = " " * indent_visual_width
-                    for i in range(1, len(content_lines_raw)):
-                        line_formatted = utils.format_eet_content(
-                            content_lines_raw[i], self.username, utils.FG_BRIGHT_YELLOW
-                        )
-                        output_lines.append(f"{indent_str}{line_formatted}")
-        footer_lines = []
-        # Footer logic for static timeline
-        base_command_parts = ["timeline"]
-        if (
-            self._current_target_filter["type"] == "user"
-            and self._current_target_filter["value"]
-        ):
-            base_command_parts.append(f"@{self._current_target_filter['value']}")
-        elif (
-            self._current_target_filter["type"] == "channel"
-            and self._current_target_filter["value"]
-        ):
-            base_command_parts.append(f"#{self._current_target_filter['value']}")
-        elif self._current_target_filter["type"] != "all":
-            base_command_parts.append(self._current_target_filter["type"])
-        base_command_str = " ".join(base_command_parts)
-        footer = ""
-        if not eets and page > 1:
-            footer = f"No more eets on page {page}. Type `{base_command_str} {page - 1}` for previous."
-        elif len(eets) >= self._timeline_page_size:
-            footer = f"Type `{base_command_str} {page + 1}` for more, or `{base_command_str} {page - 1}` for previous (if page > 1)."
-        elif eets:
-            footer = f"End of results on page {page}." + (
-                f" Type `{base_command_str} {page - 1}` for previous."
-                if page > 1
-                else ""
-            )
-        if footer:
-            footer_lines.append(footer)
-        if footer_lines:
-            output_lines.append("\r\n" + "\r\n".join(footer_lines))
-        return "\r\n".join(output_lines)
-
-    # --- Methods for watch mode with sidebar ---
-    async def _refresh_watch_display(self, timeline_page_to_fetch: int):
-        """Refreshes the entire watch mode screen, including timeline and sidebar."""
-        if not self.username or not self._is_watching_timeline:
-            return
-
-        self._current_timeline_page = timeline_page_to_fetch
-        try:
-            eets = await db.db_get_filtered_timeline_posts(
-                self.username,
-                self._current_target_filter,
-                page=self._current_timeline_page,
-                page_size=self._timeline_page_size,
-            )
-            self._last_timeline_eets_count = len(eets)
-
-            if (
-                self._sidebar_enabled
-            ):  # Should always be true if _is_watching_timeline is true
-                await self._update_sidebar_full_user_list()
-
-            screen_output = self._build_watch_screen_output(eets)
-            self._clear_screen()
-            self._write_to_channel(screen_output, newline=True)
-            self._redraw_prompt_and_buffer()
-
-        except Exception as e:
-            error_message = f"Timeline Refresh Error: {e}"
-            if self._chan:  # Ensure channel exists before trying to write
-                self._clear_screen()
-                self._write_to_channel(error_message + "\r\n")
-                self._redraw_prompt_and_buffer()
-
-    async def _update_sidebar_full_user_list(self):
-        """Fetches and formats the list of users for the sidebar."""
-        if not self.username or not self._active_sessions:
-            self._sidebar_full_user_list = []
-            return
-
-        online_usernames = sorted(
-            list(self._active_sessions.keys()), key=lambda u: u.lower()
-        )
-
-        followed_users_data = await db.db_get_user_following(self.username)  # RPC call
-        followed_usernames_set = {
-            user_data["username"].lower() for user_data in followed_users_data
-        }
-
-        def sort_key(u_name: str):
-            is_self = u_name.lower() == self.username.lower()
-            is_followed = u_name.lower() in followed_usernames_set
-            return (not is_self, not is_followed, u_name.lower())
-
-        sorted_online_users = sorted(online_usernames, key=sort_key)
-
-        formatted_list = []
-        for user in sorted_online_users:
-            prefix = (
-                f"{FG_GREEN}*{RESET} "
-                if user.lower() in followed_usernames_set
-                and user.lower() != self.username.lower()
-                else "  "
-            )
-            user_display_str = f"{prefix}@{user}"
-            if user.lower() == self.username.lower():
-                user_display_str = f"  {FG_BRIGHT_YELLOW}@{user}{RESET}"
-
-            truncated_user_str = utils.truncate_str_with_wcwidth(
-                user_display_str, config.SIDEBAR_WIDTH - 1
-            )
-            formatted_list.append(truncated_user_str)
-        self._sidebar_full_user_list = formatted_list
-
-    def _get_timeline_body_lines_for_watch(
-        self,
-        eets: List[Dict[str, Any]],
-        timeline_content_width: int,
-        num_lines_available: int,
-    ) -> List[str]:
-        """Generates formatted and padded lines for the timeline body in watch mode."""
-        if not self.username:
-            return [" " * timeline_content_width] * num_lines_available
-
-        time_w, user_w_max, sep_chars_count = 10, 18, 4  # "  " + "  "
-        eet_content_text_width = max(
-            10, timeline_content_width - time_w - user_w_max - sep_chars_count
-        )
-
-        output_lines = []
-
-        if not eets:
-            for _ in range(num_lines_available):
-                output_lines.append(" " * timeline_content_width)
-            return output_lines[:num_lines_available]  # Ensure exact length
-
-        for eet_idx, eet in enumerate(eets):
-            if len(output_lines) >= num_lines_available:
-                break
-
-            time_str = utils.time_ago(eet.get("created_at"))
-            author_username = eet.get("username", "ghost")
-            author_display_name = eet.get("display_name")
-
-            user_display_raw = f"@{author_username}"
-            if author_display_name:
-                user_display_raw = f"{author_display_name} ({user_display_raw})"
-
-            # Truncate the non-ANSI version for width calculation before coloring
-            user_display_truncated_plain = utils.truncate_str_with_wcwidth(
-                user_display_raw, user_w_max
-            )
-
-            user_col_str_colored = user_display_truncated_plain  # Base for coloring
-            if author_username.lower() == self.username.lower():
-                user_col_str_colored = (
-                    f"{FG_BRIGHT_YELLOW}{user_display_truncated_plain}{RESET}"
-                )
-
-            user_col_padding = user_w_max - utils.wcswidth(user_display_truncated_plain)
-            user_col_final_padded = (
-                f"{user_col_str_colored}{' ' * max(0, user_col_padding)}"
-            )
-
-            raw_content = eet.get("content", "").replace("\r", "").replace("\n", " ")
-            wrapper = textwrap.TextWrapper(
-                width=eet_content_text_width,
-                subsequent_indent="  ",
-                break_long_words=True,
-                break_on_hyphens=True,
-                replace_whitespace=False,
-                drop_whitespace=True,
-            )
-            content_lines_wrapped_raw = wrapper.wrap(text=utils.strip_ansi(raw_content))
-            if not content_lines_wrapped_raw:
-                content_lines_wrapped_raw = [""]
-
-            for i, line_content_raw in enumerate(content_lines_wrapped_raw):
-                if len(output_lines) >= num_lines_available:
-                    break
-
-                formatted_eet_line_content_colored = utils.format_eet_content(
-                    line_content_raw, self.username
-                )
-
-                line_prefix_str = ""
-                if i == 0:
-                    line_prefix_str = f"{time_str:<{time_w}}  {user_col_final_padded}  "
-                else:
-                    indent_spaces = time_w + 2 + user_w_max + 2
-                    line_prefix_str = " " * indent_spaces
-
-                full_line_unpadded = (
-                    f"{line_prefix_str}{formatted_eet_line_content_colored}"
-                )
-
-                line_padding = timeline_content_width - utils.wcswidth(
-                    utils.strip_ansi(full_line_unpadded)
-                )
-                output_lines.append(f"{full_line_unpadded}{' ' * max(0, line_padding)}")
-
-            if eet_idx < len(eets) - 1 and len(output_lines) < num_lines_available:
-                output_lines.append(" " * timeline_content_width)
-
-        while len(output_lines) < num_lines_available:
-            output_lines.append(" " * timeline_content_width)
-
-        return output_lines[:num_lines_available]
-
-    def _get_sidebar_visible_content_lines(self, num_lines_available: int) -> List[str]:
-        """Generates formatted and padded lines for the visible portion of the sidebar."""
-        if not self._sidebar_enabled or not self._sidebar_full_user_list:
-            return [" " * config.SIDEBAR_WIDTH] * num_lines_available
-
-        start_idx = self._sidebar_scroll_offset
-        end_idx = self._sidebar_scroll_offset + num_lines_available
-
-        visible_user_strings_already_truncated = self._sidebar_full_user_list[
-            start_idx:end_idx
-        ]
-
-        output_lines = []
-        for user_str_truncated_colored in visible_user_strings_already_truncated:
-            padding = config.SIDEBAR_WIDTH - utils.wcswidth(
-                utils.strip_ansi(user_str_truncated_colored)
-            )
-            output_lines.append(f"{user_str_truncated_colored}{' ' * max(0, padding)}")
-
-        while len(output_lines) < num_lines_available:
-            output_lines.append(" " * config.SIDEBAR_WIDTH)
-        return output_lines[:num_lines_available]
-
-    def _build_watch_screen_output(self, eets: List[Dict[str, Any]]) -> str:
-        """Builds the complete screen output string for watch mode with sidebar."""
-        if not self.username:
-            return ""
-
-        sidebar_w = config.SIDEBAR_WIDTH if self._sidebar_enabled else 0
-        separator_str = f" {FG_BRIGHT_BLACK}|{RESET} " if self._sidebar_enabled else ""
-        separator_visual_w = (
-            utils.wcswidth(utils.strip_ansi(separator_str))
-            if self._sidebar_enabled
-            else 0
-        )
-
-        timeline_w = self._term_width - sidebar_w - separator_visual_w
-        timeline_w = max(20, timeline_w)
-
-        output_buffer = []
-
-        # --- Calculate Scrollable Body Height (same for timeline and sidebar body) ---
-        num_header_lines = 3
-        num_footer_lines = 1
-        prompt_line_allowance = 1
-        scrollable_body_height = (
-            self._term_height
-            - num_header_lines
-            - num_footer_lines
-            - prompt_line_allowance
-        )
-        scrollable_body_height = max(1, scrollable_body_height)
-
-        # --- Prepare Timeline Header Content (Padded) ---
-        target_type = self._current_target_filter["type"]
-        target_val = self._current_target_filter["value"]
-        tl_title_text_content = (
-            f"#{target_val}"
-            if target_type == "channel" and target_val
-            else f"@{target_val}"
-            if target_type == "user" and target_val
-            else "Your 'Mine' Feed"
-            if target_type == "mine"
-            else "All Eets"
-        )
-        _tl_title_raw = (
-            BOLD
-            + utils.truncate_str_with_wcwidth(
-                f"--- {tl_title_text_content} (Page {self._current_timeline_page}, {self._timeline_page_size} per page) ---",
-                timeline_w,
-            )
-            + RESET
-        )
-        tl_title_padded = f"{_tl_title_raw}{' ' * max(0, timeline_w - utils.wcswidth(utils.strip_ansi(_tl_title_raw)))}"
-
-        time_cw, user_cw_max, tl_col_seps = 10, 18, 2 * 2  # 2 spaces for 2 seps "  "
-        eet_cw = max(10, timeline_w - time_cw - user_cw_max - tl_col_seps)
-        _tl_cols_raw = utils.truncate_str_with_wcwidth(
-            f"{'Time':<{time_cw}}  {'User':<{user_cw_max}}  {'Eet':<{eet_cw}}",
-            timeline_w,
-        )
-        tl_cols_padded = f"{_tl_cols_raw}{' ' * max(0, timeline_w - utils.wcswidth(utils.strip_ansi(_tl_cols_raw)))}"
-
-        _tl_sep_raw = FG_BRIGHT_BLACK + "-" * timeline_w + RESET
-        tl_sep_padded = f"{_tl_sep_raw}{' ' * max(0, timeline_w - utils.wcswidth(utils.strip_ansi(_tl_sep_raw)))}"
-
-        # --- Prepare Sidebar Header Content (Padded) ---
-        sb_title_padded = " " * sidebar_w
-        sb_sep_padded = " " * sidebar_w
-        if self._sidebar_enabled:
-            _sb_title_raw = (
-                f"{BOLD}Souls Connected ({len(self._sidebar_full_user_list)}){RESET}"
-            )
-            _sb_title_trunc = utils.truncate_str_with_wcwidth(_sb_title_raw, sidebar_w)
-            sb_title_padded = f"{_sb_title_trunc}{' ' * max(0, sidebar_w - utils.wcswidth(utils.strip_ansi(_sb_title_trunc)))}"
-
-            _sb_sep_raw = FG_BRIGHT_BLACK + "-" * sidebar_w + RESET
-            sb_sep_padded = f"{_sb_sep_raw}{' ' * max(0, sidebar_w - utils.wcswidth(utils.strip_ansi(_sb_sep_raw)))}"
-
-        # --- Assemble Header Section (3 lines) ---
-        output_buffer.append(
-            f"{tl_title_padded}"
-        )
-        output_buffer.append(
-            f"{tl_cols_padded}{separator_str}{sb_title_padded}"
-        )
-        output_buffer.append(
-            f"{tl_sep_padded}{separator_str}{sb_sep_padded if self._sidebar_enabled else ''}"
-        )
-
-        # --- Get Body Content Lines (Padded by their respective functions) ---
-        timeline_body_content = self._get_timeline_body_lines_for_watch(
-            eets, timeline_w, scrollable_body_height
-        )
-        sidebar_body_content = self._get_sidebar_visible_content_lines(
-            scrollable_body_height
-        )  # Height matches timeline body
-
-        # --- Assemble Body Section ---
-        for i in range(scrollable_body_height):
-            timeline_line = timeline_body_content[i]  # Already padded to timeline_w
-            sidebar_line = (
-                sidebar_body_content[i] if self._sidebar_enabled else ""
-            )  # Already padded to sidebar_w
-            output_buffer.append(f"{timeline_line}{separator_str}{sidebar_line}")
-
-        # --- Assemble Footer (Status Line) ---
-        status_footer_raw = f"Live updating {tl_title_text_content}... {FG_BRIGHT_BLACK}(PgUp/PgDn to scroll. 'exit' to stop){RESET}"
-        status_footer_padded = utils.truncate_str_with_wcwidth(
-            status_footer_raw, self._term_width
-        )  # Full terminal width
-        output_buffer.append(status_footer_padded)
-
-        return "\r\n".join(output_buffer)
-
     async def handle_new_post_realtime(self, post_record: Dict[str, Any]):  # PRESERVED
-        if not self._is_watching_timeline or not self.username:
-            return
-        utils.debug_log(f"RT check for {self.username}: Post {post_record.get('id')}")
-        utils.debug_log(
-            f"RT relevant for {self.username} (is watching), refreshing to page 1."
-        )
-        await self._refresh_watch_display(timeline_page_to_fetch=1)
+        await timeline_cmd.handle_new_post_realtime(self, post_record)
 
     def connection_lost(self, exc: Optional[Exception]) -> None:
         utils.debug_log(
