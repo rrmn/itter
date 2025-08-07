@@ -46,7 +46,6 @@ def debug_log(msg: str) -> None:
 
 # --- Time Formatting ---
 def time_ago(iso_str: Optional[str]) -> str:
-    # ... (keep existing time_ago function) ...
     if not iso_str: return "some time ago"
     parsed_dt = None
     if isinstance(iso_str, datetime): parsed_dt = iso_str
@@ -79,7 +78,6 @@ HASHTAG_RE = re.compile(r"(?<!\w)#(\w(?:[\w-]*\w)?)")
 USER_RE = re.compile(r"(?<!\w)@(\w{3,20})")
 
 def parse_input_line(line: str) -> Tuple[Optional[str], str, List[str], List[str]]:
-    # ... (keep existing parse_input_line function) ...
     m = CMD_SPLIT_RE.match(line.strip());
     if not m: return None, "", [], [];
     cmd = m.group(1).lower(); raw_text = m.group(2) or "";
@@ -87,7 +85,6 @@ def parse_input_line(line: str) -> Tuple[Optional[str], str, List[str], List[str
     return cmd, raw_text, hashtags, user_refs
 
 def parse_target_filter(raw_text: str) -> Dict[str, Optional[str]]:
-    # ... (keep existing parse_target_filter function from v13) ...
     text = raw_text.strip().lower();
     if not text or text == "all": return {"type": "all", "value": None};
     if text == "mine": return {"type": "mine", "value": None};
