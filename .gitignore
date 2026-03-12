@@ -9,3 +9,4 @@ ssh_host_key.pub*
 .venv
 venv
 *.log
+output.sh
