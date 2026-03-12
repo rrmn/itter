@@ -289,12 +289,10 @@ async def refresh_watch_display(
         if shell._sidebar_enabled:
             await _update_sidebar_full_user_list(shell)
 
-        # FIX: Push heavy UI rendering into a background thread to prevent main loop typing stutter!
         screen_output = await asyncio.to_thread(_build_watch_screen_output, shell, eets)
 
         if shell._chan:
             shell._clear_screen()
-            # FIX: Direct write bypasses slow string replacement overhead
             shell._chan.write(screen_output + "\r\n")
             shell._redraw_line_and_cursor()
 

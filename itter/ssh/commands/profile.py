@@ -79,7 +79,6 @@ async def handle_profile_command(
                 + f"  Followers:    {stats['follower_count']}\r\n"
                 + "---------------------------\r\n"
             )
-            # We need to import misc inside the function to avoid circular dependency
             from itter.ssh.commands import misc as misc_cmd
 
             shell._clear_screen()

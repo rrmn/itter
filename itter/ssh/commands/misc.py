@@ -41,7 +41,6 @@ async def handle_exit_command(shell: "ItterShell") -> None:
         shell._is_watching_timeline = False
         shell._sidebar_enabled = False
 
-        # RESTORED: Stop the UI Tick Loop when exiting watch mode
         if (
             shell._timeline_auto_refresh_task
             and not shell._timeline_auto_refresh_task.done()

@@ -203,7 +203,6 @@ class ItterShell(asyncssh.SSHServerSession):
         if not self._chan:
             return
 
-        # RESTORED: Keystroke telemetry (Gated behind debug mode to preserve zero-latency typing in prod)
         if config.ITTER_DEBUG_MODE:
             utils.debug_log(f"Data received: {data!r} (datatype: {datatype})")
 
@@ -443,7 +442,6 @@ class ItterShell(asyncssh.SSHServerSession):
             self._write_to_channel(
                 f"\r\n{FG_RED}An unexpected server error occurred.{RESET}"
             )
-            # RESTORED: Python traceback rendering to the SSH client in debug mode
             if config.ITTER_DEBUG_MODE:
                 self._write_to_channel(
                     "\r\n" + traceback.format_exc().replace("\n", "\r\n")

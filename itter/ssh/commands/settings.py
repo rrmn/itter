@@ -63,7 +63,6 @@ async def _handle_key_setting(shell: "ItterShell", args: list[str]):
                 f"{FG_BRIGHT_YELLOW} (current session){RESET}" if is_current else ""
             )
 
-            # Show the key type and the start of the key body for easy identification
             key_parts = key_str.split()
             key_type = key_parts[0] if key_parts else "N/A"
             key_body_preview = (
@@ -104,10 +103,8 @@ async def _handle_key_setting(shell: "ItterShell", args: list[str]):
             )
             return
 
-        # The rest of the arguments are the public key. Join them back together.
         full_key_str = " ".join(args[2:]).strip()
 
-        # A better validation: check that the key string starts appropriately.
         key_parts = full_key_str.split()
         if not (len(key_parts) >= 2 and key_parts[0].startswith("ssh-")):
             shell._write_to_channel(
@@ -190,7 +187,6 @@ async def _handle_key_setting(shell: "ItterShell", args: list[str]):
 async def handle_settings(shell: "ItterShell", raw_text: str):
     parts = raw_text.lower().split()
     if not parts:
-        # Default view: show pagesize and mention key management
         shell._write_to_channel(
             f"\r\nCurrent settings:\r\n  - Eets per page: {BOLD}{shell._timeline_page_size}{RESET}\r\n\r\n{FG_BRIGHT_BLACK}Usage:{RESET}\r\n  settings pagesize <num>\r\n  settings key [list|add|remove] ..."
         )

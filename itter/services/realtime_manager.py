@@ -1,9 +1,11 @@
 # /realtime_manager.py
 import asyncio
 import sys
-from typing import Dict, Any, Optional, TYPE_CHECKING
+from typing import Dict, Any, Optional, TYPE_CHECKING, cast
 from realtime import RealtimeSubscribeStates
 from realtime._async.client import AsyncRealtimeClient
+
+from realtime.types import PostgresChangesPayload, RealtimePostgresChangesListenEvent
 
 from itter.core.utils import debug_log
 
@@ -23,16 +25,22 @@ def init_realtime(
     debug_log("Realtime manager module initialized.")
 
 
-def handle_global_new_post_event(payload: Any) -> None:
+def handle_global_new_post_event(payload: PostgresChangesPayload) -> None:
     if not active_sessions_ref or not isinstance(payload, dict):
         return
 
-    if payload.get("type") == "INSERT" and payload.get("table") == "posts":
-        new_post_record = payload.get("new")
+    event_type = payload.get("type") or payload.get("eventType")
+    table_name = payload.get("table")
+
+    if event_type == "INSERT" and table_name == "posts":
+        new_post_record = payload.get("new") or payload.get("record")
+
         if not new_post_record:
+            debug_log(
+                "Realtime global: Event received, but no record data found in payload."
+            )
             return
 
-        # Safely get the running event loop to schedule the UI updates
         try:
             loop = asyncio.get_running_loop()
             for username, session_instance in list(active_sessions_ref.items()):
@@ -56,11 +64,13 @@ async def start_realtime() -> None:
 
     realtime_posts_channel = rt_client.channel("itter:posts_feed")
 
+    event_type = cast(RealtimePostgresChangesListenEvent, "INSERT")
+
     realtime_posts_channel.on_postgres_changes(
-        event="INSERT",  # type: ignore
+        event=event_type,
         schema="public",
         table="posts",
-        callback=handle_global_new_post_event,  # type: ignore
+        callback=handle_global_new_post_event,
     )
 
     def rt_subscribe_callback(status: RealtimeSubscribeStates, err: Any = None) -> None:

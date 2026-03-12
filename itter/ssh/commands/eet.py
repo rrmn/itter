@@ -41,7 +41,6 @@ async def handle_eet(
             utils.debug_log(
                 "Eet posted while watching, triggering immediate timeline refresh."
             )
-            # We need to import timeline inside the function to avoid circular dependency
             from . import timeline as timeline_cmd
 
             await timeline_cmd.refresh_watch_display(shell, timeline_page_to_fetch=1)
