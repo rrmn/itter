@@ -1,6 +1,8 @@
+# /itter/ssh/shell.py
 import asyncio
 import asyncssh
-from typing import Optional, Dict, Any, List, Tuple, TYPE_CHECKING
+import traceback
+from typing import Optional, Dict, List, Tuple, TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .server import ItterSSHServer
@@ -30,59 +32,64 @@ class ItterShell(asyncssh.SSHServerSession):
         authenticated_key: Optional[str],
         is_registration_flow: bool,
         registration_details: Optional[Tuple[str, str]],
-    ):
-        self._ssh_server = ssh_server_ref
+    ) -> None:
+        self._ssh_server: "ItterSSHServer" = ssh_server_ref
         self.username: Optional[str] = initial_username
-        self._authenticated_key = authenticated_key
-        self._is_registration_flow = is_registration_flow
+        self._authenticated_key: Optional[str] = authenticated_key
+        self._is_registration_flow: bool = is_registration_flow
+
         if self._is_registration_flow and registration_details:
-            self._reg_username_candidate, self._reg_public_key = registration_details
+            self._reg_username_candidate: Optional[str] = registration_details[0]
+            self._reg_public_key: Optional[str] = registration_details[1]
         else:
-            self._reg_username_candidate, self._reg_public_key = None, None
+            self._reg_username_candidate = None
+            self._reg_public_key = None
+
         self._chan: Optional[asyncssh.SSHServerChannel] = None
         self._current_target_filter: Dict[str, Optional[str]] = {
             "type": "all",
             "value": None,
         }
-        self._is_watching_timeline = False
-        self._timeline_auto_refresh_task: Optional[asyncio.Task] = None
-        self._current_timeline_page = 1
-        self._term_width = 80
-        self._term_height = 24
-        self._input_buffer = ""
-        self._cursor_pos = 0  # Cursor position within the input buffer
-        self._command_history = CommandHistory()
+        self._is_watching_timeline: bool = False
+        self._current_timeline_page: int = 1
+        self._term_width: int = 80
+        self._term_height: int = 24
+        self._input_buffer: str = ""
+        self._cursor_pos: int = 0
+        self._command_history: CommandHistory = CommandHistory()
         self._active_sessions: Optional[Dict[str, "ItterShell"]] = None
         self._client_ip: Optional[str] = None
-        self._timeline_page_size = config.DEFAULT_TIMELINE_PAGE_SIZE
-        # For PgUp/PgDn context
+        self._timeline_page_size: int = config.DEFAULT_TIMELINE_PAGE_SIZE
         self._last_timeline_eets_count: Optional[int] = None
 
-        # Sidebar related state
         self._sidebar_enabled: bool = False
         self._sidebar_scroll_offset: int = 0
         self._sidebar_full_user_list: List[str] = []
 
+        self._timeline_auto_refresh_task: Optional[asyncio.Task[Any]] = None
+
         try:
-            with open(config.BANNER_FILE, "r") as f:
+            with open(str(config.BANNER_FILE), "r", encoding="utf-8") as f:
                 self._banner_text = f.read()
-        except FileNotFoundError:
+        except Exception:
             self._banner_text = "Welcome to itter.sh!\n(Banner file missing. You get this minimalist experience.)"
+
+        self._cached_prompt = (
+            f"({self.username})itter> " if self.username else "itter> "
+        )
         super().__init__()
 
-    def set_active_sessions_ref(self, sessions_dict: Dict[str, "ItterShell"]):
+    def set_active_sessions_ref(self, sessions_dict: Dict[str, "ItterShell"]) -> None:
         self._active_sessions = sessions_dict
 
-    def _write_to_channel(self, message: str = "", newline: bool = True):
+    def _write_to_channel(self, message: str = "", newline: bool = True) -> None:
         if self._chan:
             try:
                 processed_message = message.replace("\r\n", "\n").replace("\n", "\r\n")
-                if newline:
-                    if not processed_message.endswith("\r\n"):
-                        processed_message += "\r\n"
-                else:
-                    if processed_message.endswith("\r\n"):
-                        processed_message = processed_message[:-2]
+                if newline and not processed_message.endswith("\r\n"):
+                    processed_message += "\r\n"
+                elif not newline and processed_message.endswith("\r\n"):
+                    processed_message = processed_message[:-2]
                 self._chan.write(processed_message)
             except (
                 OSError,
@@ -90,64 +97,40 @@ class ItterShell(asyncssh.SSHServerSession):
                 ConnectionResetError,
                 BrokenPipeError,
             ) as e:
-                utils.debug_log(f"Failed to write basic content: {e}")
+                if config.ITTER_DEBUG_MODE:
+                    utils.debug_log(f"Failed to write basic content: {e}")
 
-    def _get_prompt_text(self):
-        return f"({self.username})itter> "
-
-    def _prompt(self):
-        if self.username:
-            prompt_text = self._get_prompt_text()
-            self._write_to_channel(prompt_text, newline=False)
-
-    def _redraw_prompt_and_buffer(self):
+    def _prompt(self) -> None:
         if self._chan and self.username:
-            self._prompt()
-            if self._input_buffer:
-                self._write_to_channel(self._input_buffer, newline=False)
+            self._chan.write(self._cached_prompt)
 
-    def _redraw_line_and_cursor(self):
-        """
-        Redraws the entire input line, including the prompt and buffer,
-        clears any old characters, and positions the cursor correctly.
-        """
+    def _redraw_prompt_and_buffer(self) -> None:
+        if self._chan and self.username:
+            self._chan.write(f"{self._cached_prompt}{self._input_buffer}")
+
+    def _redraw_line_and_cursor(self) -> None:
         if not self._chan:
             return
-
-        # 1. Go to the beginning of the line
-        self._write_to_channel("\r", newline=False)
-
-        # 2. Write the new content (prompt + buffer)
-        prompt_text = self._get_prompt_text()
-        self._write_to_channel(prompt_text + self._input_buffer, newline=False)
-
-        # 3. Clear any characters from the old, longer line
-        self._write_to_channel(
-            "\033[K", newline=False
-        )  # Erase from cursor to end of line
-
-        # 4. Move cursor back to the correct position
-        suffix = self._input_buffer[self._cursor_pos :]
-        move_left_count = utils.wcswidth(suffix)
-        if move_left_count > 0:
-            self._write_to_channel(f"\033[{move_left_count}D", newline=False)
+        payload = f"\r{self._cached_prompt}{self._input_buffer}\033[K"
+        chars_to_move_left = utils.wcswidth(self._input_buffer[self._cursor_pos :])
+        if chars_to_move_left > 0:
+            payload += f"\033[{chars_to_move_left}D"
+        self._chan.write(payload)
 
     def connection_made(self, chan: asyncssh.SSHServerChannel) -> None:
         utils.debug_log(
             f"ItterShell connection_made for {'REGISTRATION' if self._is_registration_flow else self.username}"
         )
         self._chan = chan
-
-        # --- Capture client IP ---
         if self._chan:
             peername = self._chan.get_extra_info("peername")
             if peername and isinstance(peername, tuple) and len(peername) > 0:
-                self._client_ip = peername[0]
-                utils.debug_log("Client IP captured.")
+                self._client_ip = str(peername[0])
+                utils.debug_log(f"Client IP captured: {self._client_ip}")
             else:
-                # Should ideally not happen if connection is established
                 self._client_ip = None
                 utils.debug_log("Could not determine client IP for session.")
+
         if self._is_registration_flow:
             asyncio.create_task(self._handle_registration_flow())
         else:
@@ -158,71 +141,56 @@ class ItterShell(asyncssh.SSHServerSession):
                 self._prompt()
             elif not self.username:
                 self._write_to_channel(
-                    f"\r\n{FG_RED}Error:{RESET} Login session started without a username. Closing connection."
+                    f"\r\n{FG_RED}Error:{RESET} Login session started without a username."
                 )
                 self.close()
             else:
-                self._write_to_channel(
-                    f"\r\n{FG_RED}Error:{RESET} Server state is inconsistent (active_sessions not set). Please try again in a moment."
-                )
                 utils.debug_log(
                     "CRITICAL: _active_sessions is None in ItterShell connection_made"
                 )
+                self._write_to_channel(
+                    f"\r\n{FG_RED}Error:{RESET} Server state is inconsistent."
+                )
                 self.close()
 
-    async def _handle_registration_flow(self):
+    async def _handle_registration_flow(self) -> None:
         utils.debug_log(f"Finalizing registration for '{self._reg_username_candidate}'")
         if not self._reg_username_candidate or not self._reg_public_key:
             self._write_to_channel(
-                f"\r\n{FG_RED}Registration Error:{RESET} Missing username or public key. Can't create an account from nothing. Connection closed."
+                f"\r\n{FG_RED}Registration Error:{RESET} Missing username or public key."
             )
             self.close()
             return
         try:
             await db.db_create_user(self._reg_username_candidate, self._reg_public_key)
-            success_msg = (
-                f"\r\nSuccess! Account '{self._reg_username_candidate}' created.\r\n"
-                f"You can now log in via:\r\n"
-                f"\r\n"
-                f"  > {BOLD}ssh {self._reg_username_candidate}@app.itter.sh{RESET}\r\n"
-                f"\r\n"
-                f"Or if you switch between multiple keys:\r\n"
-                f"  > {BOLD}ssh{RESET} {FG_BRIGHT_BLACK}-i /path/to/your/private_key{RESET} {BOLD}{self._reg_username_candidate}@app.itter.sh{RESET}"
-                f"\r\n\r\n"
-                f"Have fun & see you on the other side!"
-                f"\r\n"
-            )
-            self._write_to_channel(success_msg)
             utils.debug_log(
                 f"User '{self._reg_username_candidate}' registered successfully."
+            )
+            self._write_to_channel(
+                f"\r\nSuccess! Account '{self._reg_username_candidate}' created.\r\n"
+                f"You can now log in via:\r\n\r\n"
+                f"  > {BOLD}ssh {self._reg_username_candidate}@app.itter.sh{RESET}\r\n\r\n"
+                f"Have fun & see you on the other side!\r\n"
             )
         except Exception as e:
             utils.debug_log(
                 f"[DB ERROR] Registration failed for '{self._reg_username_candidate}': {e}"
             )
             self._write_to_channel(
-                f"\r\n{FG_RED}Registration Failed:{RESET} Could not create the account. The username may be taken or we screwed up somehow."
+                f"\r\n{FG_RED}Registration Failed:{RESET} Could not create the account."
             )
         finally:
             self.close()
 
     def pty_requested(self, term_type: str, term_size: tuple, term_modes: dict) -> bool:
-        cols = 80
-        rows = 24
-        pixwidth = 0
-        pixheight = 0
+        cols, rows = 80, 24
         try:
             if isinstance(term_size, tuple) and len(term_size) >= 2:
                 cols = int(term_size[0]) if term_size[0] > 0 else 80
                 rows = int(term_size[1]) if term_size[1] > 0 else 24
-            if isinstance(term_size, tuple) and len(term_size) >= 4:
-                pixwidth = int(term_size[2]) if term_size[2] else 0
-                pixheight = int(term_size[3]) if term_size[3] else 0
         except Exception as e:
             utils.debug_log(f"Error parsing term_size tuple {term_size}: {e}")
-        utils.debug_log(
-            f"PTY requested: term={term_type}, size={cols}x{rows}, pix={pixwidth}x{pixheight}"
-        )
+        utils.debug_log(f"PTY requested: term={term_type}, size={cols}x{rows}")
         self._term_width = cols
         self._term_height = rows
         return True
@@ -234,34 +202,27 @@ class ItterShell(asyncssh.SSHServerSession):
     def data_received(self, data: str, datatype: asyncssh.DataType) -> None:
         if not self._chan:
             return
-        utils.debug_log(f"Data received: {data!r} (datatype: {datatype})")
 
-        # Handle escape sequences
+        # RESTORED: Keystroke telemetry (Gated behind debug mode to preserve zero-latency typing in prod)
+        if config.ITTER_DEBUG_MODE:
+            utils.debug_log(f"Data received: {data!r} (datatype: {datatype})")
+
         if data.startswith("\x1b"):
-            if data == "\x1b[A":  # Up arrow
-                command = self._command_history.scroll_up()
-                self._input_buffer = command
+            if data == "\x1b[A":
+                self._input_buffer = self._command_history.scroll_up()
                 self._cursor_pos = len(self._input_buffer)
                 self._redraw_line_and_cursor()
-                return
-            elif data == "\x1b[B":  # Down arrow
-                command = self._command_history.scroll_down()
-                self._input_buffer = command
+            elif data == "\x1b[B":
+                self._input_buffer = self._command_history.scroll_down()
                 self._cursor_pos = len(self._input_buffer)
                 self._redraw_line_and_cursor()
-                return
-            elif data == "\x1b[D":  # Left arrow
-                if self._cursor_pos > 0:
-                    self._cursor_pos -= 1
-                    self._write_to_channel(data, newline=False)
-                return
-            elif data == "\x1b[C":  # Right arrow
-                if self._cursor_pos < len(self._input_buffer):
-                    self._cursor_pos += 1
-                    self._write_to_channel(data, newline=False)
-                return
-            # Page Up: \x1b[5~ , Page Down: \x1b[6~
-            elif data == "\x1b[5~":  # Page Up (timeline scroll)
+            elif data == "\x1b[D" and self._cursor_pos > 0:
+                self._cursor_pos -= 1
+                self._chan.write(data)
+            elif data == "\x1b[C" and self._cursor_pos < len(self._input_buffer):
+                self._cursor_pos += 1
+                self._chan.write(data)
+            elif data == "\x1b[5~":
                 if self._is_watching_timeline:
                     if self._current_timeline_page > 1:
                         self._current_timeline_page -= 1
@@ -270,16 +231,13 @@ class ItterShell(asyncssh.SSHServerSession):
                                 self, timeline_page_to_fetch=self._current_timeline_page
                             )
                         )
-                    else:  # Already at first page of watch timeline
+                    else:
                         self._write_to_channel(
                             f"\r\n{FG_BRIGHT_BLACK}You cannot move faster than time (yet).{RESET}",
                             newline=True,
                         )
                         self._redraw_prompt_and_buffer()
-                    return
-                elif (
-                    self._last_timeline_eets_count is not None
-                ):  # Static timeline with previous results
+                elif self._last_timeline_eets_count is not None:
                     if self._current_timeline_page > 1:
                         self._current_timeline_page -= 1
                         asyncio.create_task(
@@ -288,21 +246,19 @@ class ItterShell(asyncssh.SSHServerSession):
                                 page=self._current_timeline_page,
                                 is_live_update=False,
                             )
-                        )  # is_live_update is False
+                        )
                     else:
                         self._write_to_channel(
                             f"\r\n{FG_BRIGHT_BLACK}Already at the beginning of time(line). The only way is down.{RESET}",
                             newline=True,
                         )
-                        self._prompt()  # Redraw prompt for static timeline
-                    return
-            elif data == "\x1b[6~":  # Page Down (timeline scroll)
+                        self._prompt()
+            elif data == "\x1b[6~":
                 if self._is_watching_timeline:
-                    can_page_down_live = (
+                    if (
                         self._last_timeline_eets_count is not None
                         and self._last_timeline_eets_count >= self._timeline_page_size
-                    )
-                    if can_page_down_live:  # For live, assume more can come unless last fetch was < page_size
+                    ):
                         self._current_timeline_page += 1
                         asyncio.create_task(
                             timeline_cmd.refresh_watch_display(
@@ -315,12 +271,8 @@ class ItterShell(asyncssh.SSHServerSession):
                             newline=True,
                         )
                         self._redraw_prompt_and_buffer()
-                    return
-                elif self._last_timeline_eets_count is not None:  # Static timeline
-                    can_page_down_static = (
-                        self._last_timeline_eets_count >= self._timeline_page_size
-                    )
-                    if can_page_down_static:
+                elif self._last_timeline_eets_count is not None:
+                    if self._last_timeline_eets_count >= self._timeline_page_size:
                         self._current_timeline_page += 1
                         asyncio.create_task(
                             timeline_cmd.render_and_display_timeline(
@@ -335,106 +287,83 @@ class ItterShell(asyncssh.SSHServerSession):
                             newline=True,
                         )
                         self._prompt()
-                    return
-            # Sidebar scroll handlers
-            elif data == "\x1b[5;5~":  # Ctrl+PageUp
-                if self._sidebar_enabled:  # Only if sidebar is active
-                    self._sidebar_scroll_offset = max(
-                        0, self._sidebar_scroll_offset - config.SIDEBAR_SCROLL_STEP
+            elif data == "\x1b[5;5~" and self._sidebar_enabled:
+                utils.debug_log(
+                    f"Sidebar scroll up. Old offset: {self._sidebar_scroll_offset}"
+                )
+                self._sidebar_scroll_offset = max(
+                    0, self._sidebar_scroll_offset - config.SIDEBAR_SCROLL_STEP
+                )
+                asyncio.create_task(
+                    timeline_cmd.refresh_watch_display(
+                        self, timeline_page_to_fetch=self._current_timeline_page
                     )
-                    utils.debug_log(
-                        f"Sidebar scroll up. New offset: {self._sidebar_scroll_offset}"
+                )
+            elif data == "\x1b[6;5~" and self._sidebar_enabled:
+                utils.debug_log(
+                    f"Sidebar scroll down. Old offset: {self._sidebar_scroll_offset}"
+                )
+                scrollable_body_height = max(1, self._term_height - 3 - 1 - 1)
+                max_scroll = max(
+                    0, len(self._sidebar_full_user_list) - scrollable_body_height
+                )
+                self._sidebar_scroll_offset = min(
+                    max_scroll, self._sidebar_scroll_offset + config.SIDEBAR_SCROLL_STEP
+                )
+                asyncio.create_task(
+                    timeline_cmd.refresh_watch_display(
+                        self, timeline_page_to_fetch=self._current_timeline_page
                     )
-                    asyncio.create_task(
-                        timeline_cmd.refresh_watch_display(
-                            self, timeline_page_to_fetch=self._current_timeline_page
-                        )
-                    )  # Redraw with current timeline page
-                    return
-            elif data == "\x1b[6;5~":  # Ctrl+PageDown
-                if self._sidebar_enabled:  # Only if sidebar is active
-                    # Calculate max scroll offset for sidebar dynamically
-                    num_header_rows = 3
-                    num_footer_rows = 1
-                    prompt_line_height = 1
-                    scrollable_body_height = (
-                        self._term_height
-                        - num_header_rows
-                        - num_footer_rows
-                        - prompt_line_height
-                    )
-                    scrollable_body_height = max(
-                        1, scrollable_body_height
-                    )  # Ensure at least 1 line
-
-                    max_scroll = max(
-                        0, len(self._sidebar_full_user_list) - scrollable_body_height
-                    )
-                    self._sidebar_scroll_offset = min(
-                        max_scroll,
-                        self._sidebar_scroll_offset + config.SIDEBAR_SCROLL_STEP,
-                    )
-                    utils.debug_log(
-                        f"Sidebar scroll down. New offset: {self._sidebar_scroll_offset}, Max scroll: {max_scroll}"
-                    )
-                    asyncio.create_task(
-                        timeline_cmd.refresh_watch_display(
-                            self, timeline_page_to_fetch=self._current_timeline_page
-                        )
-                    )  # Redraw with current timeline page
-                    return
+                )
             else:
-                utils.debug_log(f"Unhandled escape sequence: {data!r}")
-                return
+                if config.ITTER_DEBUG_MODE:
+                    utils.debug_log(f"Unhandled escape sequence: {data!r}")
+            return
 
-        # Handle normal character input
+        needs_redraw = False
+
         for char in data:
             if char in ("\r", "\n"):
-                self._write_to_channel()
+                self._chan.write("\r\n")
                 line_to_process = self._input_buffer
                 self._input_buffer = ""
                 if line_to_process:
-                    utils.debug_log(f"Processing command line: '{line_to_process}'")
                     self._cursor_pos = 0
                     asyncio.create_task(self._handle_command_line(line_to_process))
                 else:
                     self._prompt()
-            elif char == "\x7f" or char == "\x08":  # Backspace
-                if self._cursor_pos > 0:
-                    self._input_buffer = (
-                        self._input_buffer[: self._cursor_pos - 1]
-                        + self._input_buffer[self._cursor_pos :]
-                    )
-                    self._cursor_pos -= 1
-                    self._redraw_line_and_cursor()
-            elif char == "\x03":  # Ctrl+C
-                self._write_to_channel("^C\r\n", newline=False)
+                needs_redraw = False
+            elif char in ("\x7f", "\x08") and self._cursor_pos > 0:
+                self._input_buffer = (
+                    self._input_buffer[: self._cursor_pos - 1]
+                    + self._input_buffer[self._cursor_pos :]
+                )
+                self._cursor_pos -= 1
+                needs_redraw = True
+            elif char == "\x03":
+                self._chan.write("^C\r\n")
                 self.close()
-            elif char == "\x04":  # Ctrl+D
-                self._write_to_channel("^D\r\n", newline=False)
+                needs_redraw = False
+            elif char == "\x04":
+                self._chan.write("^D\r\n")
                 self.close()
-            elif char == "\x15":  # Ctrl+U
-                if self._input_buffer:
-                    self._input_buffer = ""
-                    self._cursor_pos = 0
-                    self._redraw_line_and_cursor()
-            elif char == "\x17":  # Ctrl+W
-                if self._cursor_pos > 0:
-                    old_buffer = self._input_buffer
-                    end_pos = self._cursor_pos
-                    # Move left past any spaces
-                    start_pos = end_pos - 1
-                    while start_pos >= 0 and old_buffer[start_pos].isspace():
-                        start_pos -= 1
-                    # Move left past the word
-                    while start_pos >= 0 and not old_buffer[start_pos].isspace():
-                        start_pos -= 1
-                    new_cursor_pos = start_pos + 1
-                    self._input_buffer = (
-                        old_buffer[:new_cursor_pos] + old_buffer[end_pos:]
-                    )
-                    self._cursor_pos = new_cursor_pos
-                    self._redraw_line_and_cursor()
+                needs_redraw = False
+            elif char == "\x15" and self._input_buffer:
+                self._input_buffer = ""
+                self._cursor_pos = 0
+                needs_redraw = True
+            elif char == "\x17" and self._cursor_pos > 0:
+                old_buffer = self._input_buffer
+                end_pos = self._cursor_pos
+                start_pos = end_pos - 1
+                while start_pos >= 0 and old_buffer[start_pos].isspace():
+                    start_pos -= 1
+                while start_pos >= 0 and not old_buffer[start_pos].isspace():
+                    start_pos -= 1
+                new_cursor_pos = start_pos + 1
+                self._input_buffer = old_buffer[:new_cursor_pos] + old_buffer[end_pos:]
+                self._cursor_pos = new_cursor_pos
+                needs_redraw = True
             elif char.isprintable():
                 self._input_buffer = (
                     self._input_buffer[: self._cursor_pos]
@@ -442,90 +371,89 @@ class ItterShell(asyncssh.SSHServerSession):
                     + self._input_buffer[self._cursor_pos :]
                 )
                 self._cursor_pos += 1
-                self._redraw_line_and_cursor()
-            else:
-                utils.debug_log(f"Ignoring unhandled character: {char!r}")
+                needs_redraw = True
 
-    def _clear_screen(self):
+        if needs_redraw:
+            self._redraw_line_and_cursor()
+
+    def _clear_screen(self) -> None:
         if self._chan:
             self._chan.write("\033[2J\033[H")
 
-    async def _handle_command_line(self, line: str):
+    async def _handle_command_line(self, line: str) -> None:
         if not self.username and not self._is_registration_flow:
-            self._write_to_channel(
-                f"{FG_RED}Critical Error:{RESET} No user context for command. Closing connection."
-            )
+            self._write_to_channel(f"{FG_RED}Critical Error:{RESET} No user context.")
             self.close()
             return
+
         cmd, raw_text_full, hashtags_in_full_line, user_refs_in_full_line = (
             utils.parse_input_line(line)
         )
-        utils.debug_log(
-            f"Parsed command: cmd='{cmd}', raw_text_full='{raw_text_full}', hashtags_in_full_line={hashtags_in_full_line}, user_refs_in_full_line={user_refs_in_full_line}"
-        )
+        utils.debug_log(f"Parsed command: cmd='{cmd}', raw_text_full='{raw_text_full}'")
+
         if not cmd:
             self._prompt()
             return
+
         try:
             self._command_history.add((cmd + " " + raw_text_full.strip()).strip())
             if cmd not in ["timeline", "tl", "watch", "w"]:
                 self._last_timeline_eets_count = None
 
-            if cmd == "eet" or cmd == "e":
+            if cmd in ["eet", "e"]:
                 await eet_cmd.handle_eet(
-                    self,
-                    raw_text_full,
-                    hashtags_in_full_line,
-                    user_refs_in_full_line,
+                    self, raw_text_full, hashtags_in_full_line, user_refs_in_full_line
                 )
-            elif cmd == "timeline" or cmd == "tl" or cmd == "watch" or cmd == "w":
+            elif cmd in ["timeline", "tl", "watch", "w"]:
                 await timeline_cmd.handle_timeline_and_watch(self, cmd, raw_text_full)
                 if self._is_watching_timeline:
                     return
-            elif cmd == "follow" or cmd == "f":
+            elif cmd in ["follow", "f"]:
                 await follow_cmd.handle_follow(self, raw_text_full)
-            elif cmd == "unfollow" or cmd == "uf":
+            elif cmd in ["unfollow", "uf"]:
                 await follow_cmd.handle_unfollow(self, raw_text_full)
-            elif cmd == "ignore" or cmd == "i":
+            elif cmd in ["ignore", "i"]:
                 await ignore_cmd.handle_ignore(self, raw_text_full)
-            elif cmd == "unignore" or cmd == "ui":
+            elif cmd in ["unignore", "ui"]:
                 await ignore_cmd.handle_unignore(self, raw_text_full)
-            elif cmd == "profile" or cmd == "p":
+            elif cmd in ["profile", "p"]:
                 await profile_cmd.handle_profile_command(
                     self, raw_text_full, user_refs_in_full_line
                 )
-            elif cmd == "settings" or cmd == "s":
-                # If arguments are provided, a setting is being changed. Clear screen first.
+            elif cmd in ["settings", "s"]:
                 if raw_text_full.strip():
                     self._clear_screen()
                 await settings_cmd.handle_settings(self, raw_text_full)
-            elif cmd == "help" or cmd == "h":
+            elif cmd in ["help", "h"]:
                 await misc_cmd.handle_help(self)
-            elif cmd == "clear" or cmd == "c":
+            elif cmd in ["clear", "c"]:
                 await misc_cmd.handle_clear(self)
                 return
-            elif cmd == "exit" or cmd == "x":
+            elif cmd in ["exit", "x"]:
                 await misc_cmd.handle_exit_command(self)
                 return
             else:
                 self._write_to_channel(
-                    f"Sorry, unknown command: '{FG_BRIGHT_BLACK}{cmd}{RESET}'. Are you making stuff up? Try '{FG_BRIGHT_BLACK}help{RESET}' to see what's possible."
+                    f"Unknown command: '{FG_BRIGHT_BLACK}{cmd}{RESET}'. Try '{FG_BRIGHT_BLACK}help{RESET}'."
                 )
         except ValueError as ve:
             self._write_to_channel(f"{FG_RED}Error:{RESET} {ve}")
         except Exception as e:
             utils.debug_log(f"Error handling command '{cmd}': {e}")
             self._write_to_channel(
-                f"\r\n{FG_RED}An unexpected server error occurred.{RESET} My apologies. I'll give a wedgie to the developer for that."
+                f"\r\n{FG_RED}An unexpected server error occurred.{RESET}"
             )
+            # RESTORED: Python traceback rendering to the SSH client in debug mode
             if config.ITTER_DEBUG_MODE:
-                import traceback
+                self._write_to_channel(
+                    "\r\n" + traceback.format_exc().replace("\n", "\r\n")
+                )
 
-                self._write_to_channel(traceback.format_exc())
         if self._chan and not self._is_watching_timeline:
             self._prompt()
 
-    async def handle_new_post_realtime(self, post_record: Dict[str, Any]):  # PRESERVED
+    async def handle_new_post_realtime(self, post_record: Dict[str, Any]) -> None:
+        utils.debug_log(f"RT check for {self.username}: Post {post_record.get('id')}")
         await timeline_cmd.handle_new_post_realtime(self, post_record)
 
     def connection_lost(self, exc: Optional[Exception]) -> None:
@@ -541,11 +469,13 @@ class ItterShell(asyncssh.SSHServerSession):
                 del self._active_sessions[self.username]
             except KeyError:
                 pass
+
         if (
             self._timeline_auto_refresh_task
             and not self._timeline_auto_refresh_task.done()
         ):
             self._timeline_auto_refresh_task.cancel()
+
         self._sidebar_enabled = False
         self._chan = None
 

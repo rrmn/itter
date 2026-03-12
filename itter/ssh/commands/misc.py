@@ -8,7 +8,7 @@ if TYPE_CHECKING:
     from itter.ssh.shell import ItterShell
 
 
-def display_welcome_banner(shell: "ItterShell"):
+def display_welcome_banner(shell: "ItterShell") -> None:
     shell._clear_screen()
     banner_lines = shell._banner_text.splitlines()
     for line in banner_lines:
@@ -16,7 +16,7 @@ def display_welcome_banner(shell: "ItterShell"):
     shell._write_to_channel()
 
 
-def show_help(shell: "ItterShell"):
+def show_help(shell: "ItterShell") -> None:
     help_text = (
         f"\r\nitter.sh Commands:\r\n"
         f"  {BOLD}e{RESET}et {FG_BRIGHT_BLACK}<text>{RESET}                     - Post an eet (max {config.EET_MAX_LENGTH} chars).\r\n"
@@ -36,16 +36,18 @@ def show_help(shell: "ItterShell"):
     shell._write_to_channel(help_text)
 
 
-async def handle_exit_command(shell: "ItterShell"):
+async def handle_exit_command(shell: "ItterShell") -> None:
     if shell._is_watching_timeline:
         shell._is_watching_timeline = False
-        shell._sidebar_enabled = False  # Disable sidebar
+        shell._sidebar_enabled = False
+
+        # RESTORED: Stop the UI Tick Loop when exiting watch mode
         if (
             shell._timeline_auto_refresh_task
             and not shell._timeline_auto_refresh_task.done()
         ):
             shell._timeline_auto_refresh_task.cancel()
-        # Restore normal screen after exiting watch mode
+
         shell._clear_screen()
         display_welcome_banner(shell)
         show_help(shell)
@@ -55,15 +57,14 @@ async def handle_exit_command(shell: "ItterShell"):
         shell.close()
 
 
-async def handle_help(shell: "ItterShell"):
+async def handle_help(shell: "ItterShell") -> None:
     display_welcome_banner(shell)
     show_help(shell)
 
 
-async def handle_clear(shell: "ItterShell"):
+async def handle_clear(shell: "ItterShell") -> None:
     shell._clear_screen()
     if shell._is_watching_timeline:
-        # We need to import timeline inside the function to avoid circular dependency
         from . import timeline as timeline_cmd
 
         await timeline_cmd.refresh_watch_display(

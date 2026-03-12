@@ -1,4 +1,4 @@
-# /itter/ssh_server.py
+# /itter/ssh/ssh_server.py
 import asyncssh
 import sys
 from typing import Dict
@@ -8,19 +8,18 @@ from itter.ssh.shell import ItterShell
 import itter.core.utils as utils
 import itter.core.config as config
 
+
 # --- SSH Server Start Function ---
-async def start_ssh_server(
-    sessions_dict: Dict[str, ItterShell]
-):
+async def start_ssh_server(sessions_dict: Dict[str, ItterShell]) -> None:
     """Starts the AsyncSSH server."""
     init_ssh(sessions_dict)
     utils.debug_log(f"Starting SSH server on {config.SSH_HOST}:{config.SSH_PORT}")
     try:
         await asyncssh.create_server(
             ItterSSHServer,
-            config.SSH_HOST,
-            config.SSH_PORT,
-            server_host_keys=[config.SSH_HOST_KEY_PATH],
+            str(config.SSH_HOST),
+            int(config.SSH_PORT),
+            server_host_keys=[str(config.SSH_HOST_KEY_PATH)],
             line_editor=False,
         )
         print(f"itter.sh server humming on ssh://{config.SSH_HOST}:{config.SSH_PORT}")
